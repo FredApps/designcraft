@@ -1,4 +1,4 @@
-use super::*;
+use super::DesignApp;
 
 /// Menu and Quick Apply entries that only CJK typesetting uses: hidden unless
 /// [`crate::cjk_features`]. The commands still run from scripts, the control channel and MCP.

@@ -2,7 +2,13 @@
 use super::metadata::civil;
 #[cfg(test)]
 use super::pipeline::export_pdf_with_report;
-use super::*;
+#[cfg(test)]
+use super::{
+    Affine, AssetId, Cache, Content, Document, Exporter, Item, PageSettings, PdfOptions, PdfVersion, Rect, Size, Standard, Writer, registration_tests,
+};
+use super::{Image, krilla};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// A successful conversion and its name-independent diagnostic. Replayed once for each asset.
 #[derive(Clone)]

@@ -2,7 +2,10 @@ use super::page_decor::dashed;
 use super::render::c32;
 use super::rulers::hair;
 use super::text_overlay::draw_text_selection;
-use super::*;
+use super::{
+    Affine, CanvasLayout, Color32, Content, DRect, DesignApp, Document, Item, Point, Pos2, Rect, Selection, Stroke, StrokeKind, Xf, compose, pos2,
+    vec2,
+};
 
 /// Spread-space → canvas transform for an item at `loc`.
 pub(super) fn item_canvas_xf(doc: &Document, layout: &CanvasLayout, id: designcraft_doc::ItemId) -> Option<(Affine, &'static str)> {

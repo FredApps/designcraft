@@ -1,10 +1,12 @@
+#[cfg(not(target_arch = "wasm32"))]
+use super::EngineError;
 use super::bytes::{base64_encode, to_bytes, to_bytes_with_preview, with_document_extension};
 use super::new::{file_new, file_sample, save_preset};
 use super::open::{file_open, file_open_bytes, file_open_recent, has_recent, recent_entry};
 use super::place::{file_place, place_drop, place_load, read_source};
 use super::save::{FolderAccess, can_revert, file_revert, file_save, recovery_dir};
 use super::snippets::{snippet_export, snippet_place};
-use super::*;
+use super::{CommandSpec, PRESETS, Value, always, bad, cmd, has_doc, json, ok, str_param};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![

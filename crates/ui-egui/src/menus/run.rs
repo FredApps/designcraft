@@ -3,7 +3,7 @@ use super::invoke::guide_spread;
 use super::state::{is_window_control, window_control_available};
 use super::tables::{CLASSIC_GROUPS, TYPOGRAPHY_GROUPS, workspace_open_panel};
 use super::tree::recent_label;
-use super::*;
+use super::{DesignApp, ScreenMode, Value, json};
 
 /// Type › Tabs: float the Tabs panel (placed above the selected text frame) or close it.
 fn toggle_tabs_panel(app: &mut DesignApp) {
@@ -33,11 +33,21 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
     if let Some(result) = crate::panel_docking::command(app, id, p) {
         return Some(result);
     }
-    let rect = app.canvas_rect;
-    let flag = |b: &mut bool| {
-        *b = !*b;
-        Ok(json!(*b))
-    };
+    run_ui_part1(app, id, p)
+        .or_else(|| run_ui_part2(app, id, p))
+        .or_else(|| run_ui_part3(app, id, p))
+        .or_else(|| run_ui_part4(app, id, p))
+        .or_else(|| run_ui_part5(app, id, p))
+}
+
+/// Toggle `b`, answering its new value.
+fn flag(b: &mut bool) -> Result<Value, String> {
+    *b = !*b;
+    Ok(json!(*b))
+}
+
+/// One slice of the UI commands: `None` if `id` isn't one of them.
+fn run_ui_part1(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
     Some(match id {
         "window.minimize" => {
             app.pending_window_commands.push(egui::ViewportCommand::Minimized(true));
@@ -254,6 +264,13 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             }
             Ok(Value::Null)
         }
+        _ => return None,
+    })
+}
+
+/// One slice of the UI commands: `None` if `id` isn't one of them.
+fn run_ui_part2(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
+    Some(match id {
         "app.loadParagraphStyles" => app.pick_styles("paragraph"),
         "app.loadCharacterStyles" => app.pick_styles("character"),
         "app.loadTextStyles" => app.pick_styles(""),
@@ -488,6 +505,14 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             app.ui.dialog = Some(crate::dialogs::Dialog::new("preferences", f));
             Ok(Value::Null)
         }
+        _ => return None,
+    })
+}
+
+/// One slice of the UI commands: `None` if `id` isn't one of them.
+fn run_ui_part3(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
+    let rect = app.canvas_rect;
+    Some(match id {
         "view.zoomIn" | "view.zoomOut" => {
             if let Some(r) = rect {
                 crate::canvas::zoom_at(app, r.center(), if id == "view.zoomIn" { 1.5 } else { 1.0 / 1.5 });
@@ -639,6 +664,13 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             app.canvas.shown = None;
             r.map(|v| v["rotation"].clone())
         }
+        _ => return None,
+    })
+}
+
+/// One slice of the UI commands: `None` if `id` isn't one of them.
+fn run_ui_part4(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
+    Some(match id {
         "view.proofColors" => {
             app.ui.proof_colors = p.get("on").and_then(Value::as_bool).unwrap_or(!app.ui.proof_colors);
             app.canvas.shown = None;
@@ -817,6 +849,13 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
                 "zone": ui.snap_zone,
             }))
         }
+        _ => return None,
+    })
+}
+
+/// One slice of the UI commands: `None` if `id` isn't one of them.
+fn run_ui_part5(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
+    Some(match id {
         "app.formattingAffectsText" => {
             app.ui.formatting_affects_text = p.get("on").and_then(Value::as_bool).unwrap_or(!app.ui.formatting_affects_text);
             Ok(json!({"on": app.ui.formatting_affects_text}))

@@ -1,6 +1,9 @@
 use super::object::swatch_menu;
 use super::typography::{para_field_min, show_typography_panel};
-use super::*;
+use super::{
+    Align, DesignApp, FIELD_H, NumField, Rect, Sense, Stroke, StrokeKind, Tokens, Ui, Value, block, full_width, icon_toggle, icons, json, link_label,
+    more_options, outline_button, place, pos2, section, set_temp_bool, show_panel, sub, temp_bool, text_attrs, units, vec2, widgets,
+};
 
 // ---------------------------------------------------------------- Text
 

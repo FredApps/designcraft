@@ -1,6 +1,6 @@
 use super::guides::{guide_at, over_item};
 use super::rulers::ruler_pieces;
-use super::*;
+use super::{CanvasLayout, DRect, DesignApp, Document, Point, Pos2, Rect, ScreenMode, SpreadRef, Xf, json};
 
 pub(super) const COLUMN_DRAG: &str = "canvas_column_drag";
 

@@ -1,4 +1,4 @@
-use super::*;
+use super::{DesignApp, Value, json};
 
 pub(super) fn download_document(app: &mut DesignApp) -> Result<Value, String> {
     let name = app.session.active().map(|d| format!("{}.designcraft", d.doc.title)).ok_or("no document")?;

@@ -1,6 +1,8 @@
 use super::caret::{next_char, next_word, prev_char, prev_word, story_of};
 use super::format::{apply_typing_format, format_targets, typing_format};
-use super::*;
+use super::{Result, Session, TextSel, Value, bad, bool_or, compose, floor_char_boundary, id_param, json, ok, str_param};
+#[cfg(test)]
+use designcraft_doc::StoryId;
 
 // Each command edits a copy-on-write Story snapshot. Reserving its known final text growth
 // avoids retaining geometric String spare capacity in every independent undo snapshot.

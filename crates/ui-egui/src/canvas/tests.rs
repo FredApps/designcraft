@@ -1782,7 +1782,7 @@ fn document_grid_is_drawn_where_points_snap_to_it() {
     let placed: Vec<_> = layout.slots.iter().map(|s| designcraft_render::Placed { spread: s.spread, xf: s.xf }).collect();
     let render = |app: &DesignApp| {
         let opts = screen_options(app, &layout, false, 1.0);
-        designcraft_render::Renderer::new().render(&doc, &app.session.cache, &placed, 160, 160, view, &opts)
+        designcraft_render::Renderer::new().render(&doc, &app.session.cache, &placed, (160, 160), view, &opts)
     };
     // The snapped point is at pixel (80, 80); halfway to the next line is 18 px further.
     let darkest = |img: &designcraft_render::Rendered, xs: [u32; 2], ys: [u32; 2]| {

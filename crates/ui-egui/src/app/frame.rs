@@ -1,4 +1,6 @@
-use super::*;
+#[cfg(not(target_arch = "wasm32"))]
+use super::json;
+use super::{DesignApp, canvas, chrome, new_document, now_ms, theme, updates_ui};
 
 impl DesignApp {
     /// Install the UI fonts on the first frame, and again when the language or the system fonts change.

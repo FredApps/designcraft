@@ -1,5 +1,5 @@
 use super::target::{Tgt, edit_table, target};
-use super::*;
+use super::{CellAddr, CellRange, Result, Selection, Session, StoryId, TableSel, TextSel, Value, bad, json, ok, str_param};
 
 // ---------- selection ----------
 

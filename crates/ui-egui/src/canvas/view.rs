@@ -1,4 +1,4 @@
-use super::*;
+use super::{CanvasLayout, DRect, DVec2, DesignApp, Document, Point, Pos2, Rect, SpreadRef, Value, View, Xf};
 
 /// Fit the current spread (or page) in the canvas.
 pub fn fit(app: &mut DesignApp, rect: Rect, what: &str) {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Affine, CanvasLayout, Color32, DRect, DesignApp, Point, Rect, Xf};
 
 pub(super) fn c32(c: [u8; 3]) -> Color32 {
     Color32::from_rgb(c[0], c[1], c[2])
@@ -165,7 +165,7 @@ pub(super) fn render_texture(app: &mut DesignApp, ctx: &egui::Context, rect: Rec
     if !has_worker || app.canvas.shown.is_none() || mode_changed || (doc_changed && zoom_same) {
         let t0 = crate::now_ms();
         let Some((doc, placed, w, h, view, opts)) = job(app) else { return };
-        let img = app.canvas.renderer.render(&doc, &app.session.cache, &placed, w, h, view, &opts);
+        let img = app.canvas.renderer.render(&doc, &app.session.cache, &placed, (w, h), view, &opts);
         upload(app, ctx, img);
         app.canvas.shown = Some(target);
         app.canvas.shown_doc = Some(doc);
@@ -249,7 +249,7 @@ fn patch_texture(app: &mut DesignApp, layout: &CanvasLayout, ppp: f64, doc_key: 
         * Affine::scale(sh.zoom)
         * Affine::translate((-sh.origin.x, -sh.origin.y));
     let opts = screen_options(app, layout, preview, ppp);
-    let img = app.canvas.patcher.render(&new, &app.session.cache, &placed, (x1 - x0) as u32, (y1 - y0) as u32, view, &opts);
+    let img = app.canvas.patcher.render(&new, &app.session.cache, &placed, ((x1 - x0) as u32, (y1 - y0) as u32), view, &opts);
     let ci = egui::ColorImage::from_rgba_premultiplied([img.width as usize, img.height as usize], &img.pixels);
     if let Some(tex) = app.canvas.texture.as_mut() {
         tex.set_partial([x0 as usize, y0 as usize], ci, egui::TextureOptions::LINEAR);

@@ -1,0 +1,16 @@
+{
+  "base": "3a1edcd76dc30a2219624ce1d30f27adc61df083",
+  "head": "0ecaa95206958d397f43a24113bd40d11c63cd9a",
+  "platforms": [],
+  "policy": "review-ci-v2.2-no-sonar",
+  "pr": 1254,
+  "repository": "storytold/designcraft",
+  "source_tree": "416e82050fd0ef1e958101c4067ccae9043b46a0",
+  "workflows": {
+    ".github/workflows/ci.yml": "ac837089efdc9c021d44613179eb690ea70eb7ee4a69ff18fa13e9e1d4d74415",
+    ".github/workflows/freebsd.yml": "3a5469bedf7314badeb8e979cfe29a9a556af795a25032b5bd5ea5da1202cd2d",
+    ".github/workflows/nix.yml": "08e6691d7ba1c905fdae7a65cf5a423c9e42e021d4fdf78c34c381bf0b00aba6",
+    ".github/workflows/packaging-lint.yml": "222d556ca2a171c19559912936887432d370c619baafeeb8acdce1e288e201a3",
+    ".github/workflows/windows-arm64.yml": "c5e9c3dc73c11bf61bd1d0760aa0183c8427ccf9fcf8d69e54fb4ea249978640"
+  }
+}

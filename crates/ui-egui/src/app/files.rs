@@ -1,4 +1,10 @@
-use super::*;
+use super::{DesignApp, ImportRequest, ImportedFile, Value, canvas, dialogs, json, shortcut_import};
+#[cfg(test)]
+use super::{Services, Session};
+#[cfg(test)]
+use crate::Inbox;
+#[cfg(test)]
+use crate::test_window;
 
 impl DesignApp {
     /// The host's save dialog for `name`, started beside the active document once it has been

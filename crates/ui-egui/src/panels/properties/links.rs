@@ -1,4 +1,4 @@
-use super::*;
+use super::{DesignApp, Sense, Tokens, Value, divider, json, sel_info, units, vec2};
 
 /// Links: status (missing / modified / embedded), page and effective resolution of every placed
 /// graphic and linked text file; Relink, Go To Link, Update Link, Embed Link for the chosen row.

@@ -1,4 +1,4 @@
-use super::*;
+use super::{DesignApp, HashMap, QuitState, Value, json, menus};
 
 impl DesignApp {
     /// Quit: close the window the way its close button does, so unsaved documents ask first.

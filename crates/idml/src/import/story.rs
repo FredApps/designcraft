@@ -1,5 +1,8 @@
 use super::text_attrs::{ace_char, clear_story_drop_cap_styles, inherits_drop_cap_style};
-use super::*;
+use super::{
+    Arc, BTreeMap, CharAttrs, CharFormat, CharRun, El, HashMap, HashSet, Importer, Item, ItemId, ParaFormat, Story, StoryId, Table, names, st,
+};
+use crate::xml::Node;
 
 impl<'r> Importer<'r> {
     // ---------- stories ----------

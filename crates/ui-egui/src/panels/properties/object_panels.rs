@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arrowhead, Cap, DesignApp, Join, Sense, Stroke, StrokeAlign, StrokeType, Tokens, Ui, Value, caption, divider, icon_toggle, icons, json, measure,
+    number, pos2, sel_info, text_attrs, units, vec2, widgets,
+};
 
 /// Stroke panel: weight, cap, miter limit, join, alignment, type, arrowheads, gap colour.
 pub fn stroke_panel(app: &mut DesignApp, ui: &mut egui::Ui) {

@@ -1,6 +1,6 @@
 #[cfg(test)]
 use super::bytes::base64_encode;
-use super::*;
+use super::{Arc, DocState, Document, NewDocument, Result, Session, Value, bad, f64_or, json, str_param};
 
 /// The longest saved preset name, and how many presets are kept.
 const MAX_PRESET_NAME: usize = 100;

@@ -1,7 +1,12 @@
+#[cfg(not(target_arch = "wasm32"))]
+use super::EngineError;
 #[cfg(test)]
 use super::bytes::base64_encode;
 use super::bytes::{base64_decode, from_bytes};
-use super::*;
+use super::{
+    Affine, Arc, Asset, AssetId, Content, Graphic, Item, ItemId, PdfCrop, Rect, Result, Selection, Session, Shape, Value, bad, json, ok, shapes,
+    str_param,
+};
 
 pub(super) fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
     // The file's size and time before it is read (a linked text file remembers them).

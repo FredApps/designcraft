@@ -1,6 +1,6 @@
 use super::common::{bool_s, p, pct, pkg_root};
 use super::spread::margin_el;
-use super::*;
+use super::{El, Ex, PARA_BUILTINS, document, escape_id, names, num, pt, st};
 
 impl<'a> Ex<'a> {
     // ---------- Fonts.xml ----------
