@@ -28,4 +28,4 @@ mod styles;
 mod target;
 
 pub use registry::specs;
-pub(crate) use selection::step_cell;
+pub(crate) use selection::{one_selected_cell_to_text, step_cell};

@@ -188,7 +188,7 @@ attr_set! {
         bullet_align: ListAlign = ListAlign::Left,
         number_align: ListAlign = ListAlign::Left,
         /// A tab stop for the text after the bullet or number, from the column's left edge.
-        list_tab: Option<f64> = None,
+        list_tab: Option<f64> = None => "deserialize_explicit_value",
         /// Restart Numbers at This Level After: a paragraph at a higher level (0 = any; otherwise
         /// that level) starts this level's numbering again.
         restart_numbers: bool = true,
@@ -222,8 +222,11 @@ impl ParaAttrs {
         let serde_json::Value::Object(patch) = value else { return self.set_json(key, value) };
         let mut merged = serde_json::to_value(rule).map_err(|e| format!("{key}: {e}"))?;
         let serde_json::Value::Object(fields) = &mut merged else { return Err(format!("{key}: not an object")) };
+        // Every field, those at their defaults (left out of the JSON) included.
+        const RULE_FIELDS: [&str; 12] =
+            ["on", "weight", "color", "tint", "columnWidth", "offset", "leftIndent", "rightIndent", "type", "gapColor", "gapTint", "keepInFrame"];
         for (k, v) in patch {
-            if !fields.contains_key(k) {
+            if !RULE_FIELDS.contains(&k.as_str()) {
                 return Err(format!("{key}: unknown rule field `{k}`"));
             }
             fields.insert(k.clone(), v.clone());

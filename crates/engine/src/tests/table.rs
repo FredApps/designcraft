@@ -127,6 +127,72 @@ fn table_edit_after_anchor_removal_floors_parent_caret() {
     }
 }
 
+/// Footnote text is addressed as a cell, but the table commands don't take it for one.
+#[test]
+fn the_cell_commands_refuse_footnote_text() {
+    let (mut s, sid, _) = session_with_frame();
+    s.execute("story.setText", &json!({"story": sid, "text": "Hello"})).unwrap();
+    s.execute("text.select", &json!({"story": sid, "anchor": 5, "focus": 5})).unwrap();
+    s.execute("footnote.insert", &json!({"text": "Note"})).unwrap();
+    let before = s.doc().unwrap().selection.clone();
+    assert!(before.text.and_then(|t| t.cell).and_then(|c| c.footnote_id()).is_some(), "the caret is in the footnote");
+    for cmd in ["table.toggleSelection", "table.prevCell", "table.nextCell"] {
+        assert!(s.execute(cmd, &json!({})).is_err(), "{cmd}");
+    }
+    assert_eq!(s.doc().unwrap().selection, before);
+    // A Tab there is typed into the footnote, not taken for the next cell.
+    s.execute("text.insert", &json!({"text": "\t"})).unwrap();
+    let notes = s.execute("footnote.list", &json!({})).unwrap();
+    assert!(notes[0]["text"].as_str().is_some_and(|t| t.contains('\t')), "{notes}");
+}
+
+/// Esc in a table toggles between the text and the cell (InDesign's Esc): the caret in a cell
+/// selects that cell, and selected cells select the first one's text; Shift+Tab goes back a cell.
+#[test]
+fn escape_toggles_text_and_cell_selection() {
+    let (mut s, sid, _) = session_with_frame();
+    let tid = s.execute("table.insert", &json!({"rows": 2, "cols": 2})).unwrap()["table"].as_u64().unwrap();
+    s.execute("table.nextCell", &json!({})).unwrap();
+    s.execute("text.insert", &json!({"text": "Phone"})).unwrap();
+    let cell = designcraft_doc::CellAddr { table: tid, row: 0, col: 1 };
+    assert_eq!(s.execute("table.toggleSelection", &json!({})).unwrap(), json!({"cells": true}));
+    let sel = s.doc().unwrap().selection.clone();
+    let cells = sel.cells.unwrap();
+    assert_eq!((cells.story.0, cells.table, cells.range), (sid, tid, designcraft_doc::CellRange::cell(0, 1)));
+    assert_eq!(sel.text.unwrap().cell, Some(cell));
+    assert_eq!(s.execute("table.toggleSelection", &json!({})).unwrap(), json!({"cells": false}));
+    let sel = s.doc().unwrap().selection.clone();
+    assert!(sel.cells.is_none());
+    let t = sel.text.unwrap();
+    assert_eq!((t.cell, t.range()), (Some(cell), 0..5), "the cell's text is selected");
+    s.execute("table.prevCell", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().selection.text.unwrap().cell, Some(designcraft_doc::CellAddr { col: 0, ..cell }));
+    // With the cell selected, typing replaces its text and leaves the caret after it.
+    s.execute("table.nextCell", &json!({})).unwrap();
+    s.execute("table.toggleSelection", &json!({})).unwrap();
+    s.execute("text.insert", &json!({"text": "Fax"})).unwrap();
+    let t = s.execute("table.get", &json!({"table": tid})).unwrap();
+    assert_eq!(t["cells"][1]["text"], "Fax");
+    let sel = s.doc().unwrap().selection.clone();
+    assert!(sel.cells.is_none());
+    assert_eq!(sel.text.unwrap().range(), 3..3);
+    // Moving the caret leaves the cell selection: typing inserts at the caret, not over the cell.
+    s.execute("table.toggleSelection", &json!({})).unwrap();
+    s.execute("text.move", &json!({"dir": "right"})).unwrap();
+    assert!(s.doc().unwrap().selection.cells.is_none());
+    s.execute("text.insert", &json!({"text": "!"})).unwrap();
+    assert_eq!(s.execute("table.get", &json!({"table": tid})).unwrap()["cells"][1]["text"], "F!ax");
+    // A selection that starts inside a merged cell goes back to the merged cell's text.
+    s.execute("table.select", &json!({"rows": [0, 1], "cols": [0, 0]})).unwrap();
+    s.execute("table.merge", &json!({})).unwrap();
+    s.execute("table.select", &json!({"rows": [1, 1], "cols": [0, 1]})).unwrap();
+    s.execute("table.toggleSelection", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().selection.text.unwrap().cell, Some(designcraft_doc::CellAddr { row: 0, col: 0, ..cell }));
+    // Outside a table there is nothing to toggle.
+    s.execute("text.select", &json!({"story": sid, "anchor": 0, "focus": 0})).unwrap();
+    assert!(s.execute("table.toggleSelection", &json!({})).is_err());
+}
+
 fn selected_merged_table(column: bool) -> (Session, u64, u64, u64) {
     let (mut s, sid, fid) = session_with_frame();
     let tid = s.execute("table.insert", &json!({"rows": 2, "cols": 2})).unwrap()["table"].as_u64().unwrap();

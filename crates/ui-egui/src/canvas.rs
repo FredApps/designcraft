@@ -56,13 +56,13 @@ use scroll::{mods, navigation_space, scrollbars, spring_zoom_mode};
 pub use text_overlay::selected_text;
 use text_overlay::{draw_dynamic_spelling, draw_hidden_characters};
 #[cfg(test)]
-use text_overlay::{draw_text_selection, hidden_marks};
+use text_overlay::{draw_text_selection, frame_hidden_marks, hidden_marks};
 use tool_overlays::draw_tool_overlays;
 pub(crate) use view::page_in_view;
 use view::present_fit;
 pub use view::{
-    apply_view_request, can_go_through_history, current_page, current_parent_page, current_slot, current_spread, current_spread_page, drop_point,
-    fit, go_through_history, go_to_page, set_zoom, show_spread, step_spread, view_centre, zoom_at,
+    PageBox, apply_view_request, can_go_through_history, current_page, current_parent_page, current_slot, current_spread, current_spread_page,
+    drop_point, fit, go_through_history, go_to_page, page_box, page_box_go, set_zoom, show_spread, step_spread, view_centre, zoom_at,
 };
 
 pub const RULER: f32 = 15.0;

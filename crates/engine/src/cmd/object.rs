@@ -607,7 +607,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Corner Options…",
             ["Object"],
             None,
-            "{shape: none|rounded|inverseRounded|inset|bevel|fancy, size, corners?: [{shape, size}] (4 entries in path order: top-left, top-right, bottom-right, bottom-left; replaces shape and size), ids?}",
+            "{shape: none|rounded|inverseRounded|inset|bevel|fancy, size, corners?: [{shape, size} | null] (4 entries in path order: top-left, top-right, bottom-right, bottom-left; replaces shape and size; null keeps that corner of each object), ids?}",
             has_selection,
             corner_options
         ),
@@ -616,7 +616,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Text Wrap",
             ["Window"],
             Some("Cmd+Alt+W"),
-            "{mode?: none|boundingBox|contour|jumpObject|jumpToNextColumn (boundingBox when absent, unless side or contour is given: then unchanged), offset?: number|[t,l,b,r], invert?: bool, side?: bothSides|leftSide|rightSide|towardsSpine|awayFromSpine|largestArea, contour?: boundingBox|graphicFrame|sameAsClipping, content?: bool (the placed graphic instead of its frame; default: whether the selection is the frame's content), ids?}; offset or contour drops an imported custom wrap boundary",
+            "{mode?: none|boundingBox|contour|jumpObject|jumpToNextColumn (boundingBox when absent, unless side or contour is given; null or those: each object's own, unchanged), offset?: number|[t,l,b,r] (a null side keeps each object's own), invert?: bool, side?: bothSides|leftSide|rightSide|towardsSpine|awayFromSpine|largestArea, contour?: boundingBox|graphicFrame|sameAsClipping, content?: bool (the placed graphic instead of its frame; default: whether the selection is the frame's content), ids?}; offset or contour drops an imported custom wrap boundary",
             has_selection,
             text_wrap
         ),
@@ -637,6 +637,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{autoFit?: bool, fitting?: none|fillProportionally|fitProportionally|fitContentToFrame|centerContent, align?: 0..8 (reference point, 4 = centre), crop?: n | [t, l, b, r] (negative adds space), ids?}",
             has_selection,
             fitting_options
+        ),
+        cmd!(
+            "object.clearFittingOptions",
+            "Clear Frame Fitting Options",
+            ["Object", "Fitting"],
+            None,
+            "{ids?} — the frames' fitting options back to the defaults: no auto-fit, no crop amounts, the centre reference point; the content stays where it is",
+            has_selection,
+            clear_fitting_options
         ),
         cmd!("object.rename", "Rename", [], None, "{id | ids?, name}", has_doc, |s, p| {
             let name = str_param(p, "name").unwrap_or("").to_string();
@@ -2101,13 +2110,18 @@ fn text_wrap(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
     };
     let mode: Option<WrapMode> = match p.get("mode") {
+        // Null keeps each object's own mode (an edit of the offsets or Invert alone).
+        Some(Value::Null) => None,
         Some(v) => Some(serde_json::from_value(v.clone()).map_err(|_| bad("object.textWrap", "unknown mode"))?),
         None if side.is_some() || contour.is_some() => None,
         None => Some(WrapMode::BoundingBox),
     };
-    let off = match p.get("offset") {
-        Some(Value::Number(n)) => Some([n.as_f64().unwrap_or(0.0); 4]),
-        Some(v) => serde_json::from_value(v.clone()).ok(),
+    // Per side [top, left, bottom, right]; a null side keeps each object's own offset there, so
+    // an edit of one side keeps the others of every object.
+    // An array with no number in it changes no offset (and so keeps a custom boundary).
+    let off: Option<[Option<f64>; 4]> = match p.get("offset") {
+        Some(Value::Number(n)) => Some([n.as_f64(); 4]),
+        Some(v) => serde_json::from_value::<[Option<f64>; 4]>(v.clone()).ok().filter(|o| o.iter().any(Option::is_some)),
         None => None,
     };
     let invert = p.get("invert").and_then(Value::as_bool);
@@ -2127,7 +2141,11 @@ fn text_wrap(s: &mut Session, p: &Value) -> Result<Value> {
                 w.mode = m;
             }
             if let Some(o) = off {
-                w.offsets = o;
+                for (w, v) in w.offsets.iter_mut().zip(o) {
+                    if let Some(v) = v {
+                        *w = v;
+                    }
+                }
             }
             if let Some(v) = invert {
                 w.invert = v;
@@ -2152,19 +2170,31 @@ fn corner_options(s: &mut Session, p: &Value) -> Result<Value> {
     use designcraft_geom::corners::{Corner, CornerOptions, CornerShape};
     let opts = match p.get("corners") {
         Some(v) => {
-            let corners: [Corner; 4] =
-                serde_json::from_value(v.clone()).map_err(|e| bad("object.cornerOptions", format!("corners: four {{shape, size}} entries ({e})")))?;
-            if corners.iter().any(|c| !c.size.is_finite() || c.size < 0.0) {
+            let corners: [Option<Corner>; 4] = serde_json::from_value(v.clone())
+                .map_err(|e| bad("object.cornerOptions", format!("corners: four {{shape, size}} or null entries ({e})")))?;
+            if corners.iter().flatten().any(|c| !c.size.is_finite() || c.size < 0.0) {
                 return Err(bad("object.cornerOptions", "corner sizes must be finite and not negative"));
             }
-            CornerOptions { corners }
+            corners
         }
         None => {
             let shape = p.get("shape").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or(CornerShape::Rounded);
-            CornerOptions::uniform(shape, f64_or(p, "size", 12.0))
+            CornerOptions::uniform(shape, f64_or(p, "size", 12.0)).corners.map(Some)
         }
     };
-    set_flag(s, p, move |i| i.corners = opts, false)
+    // A null corner keeps each object's own.
+    set_flag(
+        s,
+        p,
+        move |i| {
+            for (c, new) in i.corners.corners.iter_mut().zip(opts) {
+                if let Some(new) = new {
+                    *c = new;
+                }
+            }
+        },
+        false,
+    )
 }
 
 /// `object.matchAttributes`: the selected objects (or `ids`) take `from`'s appearance.
@@ -2938,9 +2968,40 @@ fn fitting_options(s: &mut Session, p: &Value) -> Result<Value> {
             } else if fitting.is_some() && g.auto_fit != designcraft_doc::Fitting::None {
                 g.auto_fit = mode;
             }
-            if let Some(xf) = g.fitted(r, mode) {
+            // Turning Auto-Fit off alone leaves the picture where the user put it.
+            let turn_off_only = auto == Some(false) && fitting.is_none() && align.is_none() && crop.is_none();
+            if !turn_off_only && let Some(xf) = g.fitted(r, mode) {
                 g.xf = xf;
             }
+            n += 1;
+        }
+        Ok(json!({"changed": n}))
+    })
+}
+
+/// Clear Frame Fitting Options: auto-fit off, no crop, the centre reference point. The content
+/// stays where it is, as in InDesign.
+fn clear_fitting_options(s: &mut Session, p: &Value) -> Result<Value> {
+    // Locked frames (or frames on a locked layer) keep their options, as with Fit; frames whose
+    // options are already clear are left out; with nothing to change, no edit (and no empty undo
+    // step).
+    let doc = &s.doc()?.doc;
+    let set = |g: &designcraft_doc::Graphic| g.auto_fit != designcraft_doc::Fitting::None || g.crop != [0.0; 4] || g.fit_align != 4;
+    let ids: Vec<ItemId> = targets(s, p)?
+        .into_iter()
+        .filter(|id| doc.item(*id).is_some_and(|it| unlocked(doc, it) && matches!(&it.content, Content::Graphic(g) if set(g))))
+        .collect();
+    if ids.is_empty() {
+        return Ok(json!({"changed": 0}));
+    }
+    s.edit(|d, _| {
+        let mut n = 0;
+        for id in &ids {
+            let Some(it) = d.item_mut(*id) else { continue };
+            let Content::Graphic(g) = &mut it.content else { continue };
+            g.auto_fit = designcraft_doc::Fitting::None;
+            g.crop = [0.0; 4];
+            g.fit_align = 4;
             n += 1;
         }
         Ok(json!({"changed": n}))
@@ -4351,6 +4412,60 @@ mod fitting_tests {
         let back = designcraft_idml::import_idml(&designcraft_idml::export_idml(&s.doc().unwrap().doc)).unwrap();
         let g = back.spreads.iter().flat_map(|sp| sp.items.iter()).find_map(|i| i.graphic().cloned()).unwrap();
         assert_eq!(g.auto_fit, designcraft_doc::Fitting::FillProportionally);
+    }
+
+    /// Turning Auto-Fit off by itself keeps a moved picture where it is.
+    #[test]
+    fn auto_fit_off_alone_keeps_the_picture_position() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let f = s.execute("frame.create", &json!({"rect": [100, 100, 300, 300]})).unwrap()["id"].as_u64().unwrap();
+        let png = designcraft_render::Rendered { width: 40, height: 20, pixels: vec![200; 40 * 20 * 4] }.to_png();
+        s.execute("file.place", &json!({"base64": crate::cmd::base64_encode(&png), "name": "p.png", "frame": f})).unwrap();
+        s.execute("object.fittingOptions", &json!({"ids": [f], "autoFit": true, "fitting": "fitProportionally"})).unwrap();
+        let xf = |s: &Session| s.doc().unwrap().doc.item(designcraft_doc::ItemId(f)).unwrap().graphic().unwrap().xf;
+        s.edit(|d, _| {
+            if let Some(Content::Graphic(g)) = d.item_mut(ItemId(f)).map(|it| &mut it.content) {
+                g.xf = designcraft_geom::Affine::translate((7.0, 9.0)) * g.xf;
+            }
+            Ok(Value::Null)
+        })
+        .unwrap();
+        let moved = xf(&s);
+        s.execute("object.fittingOptions", &json!({"ids": [f], "autoFit": false})).unwrap();
+        assert_eq!(xf(&s), moved);
+    }
+
+    /// Clear Frame Fitting Options puts auto-fit, crop and the reference point back to their
+    /// defaults and leaves the picture where it is.
+    #[test]
+    fn clear_fitting_options_resets_the_frames_options_and_keeps_the_picture() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let f = s.execute("frame.create", &json!({"rect": [72, 72, 272, 172]})).unwrap()["id"].as_u64().unwrap();
+        let png = designcraft_render::Rendered { width: 40, height: 20, pixels: vec![200; 40 * 20 * 4] }.to_png();
+        s.execute("file.place", &json!({"base64": crate::cmd::base64_encode(&png), "name": "p.png", "frame": f})).unwrap();
+        s.execute("object.fittingOptions", &json!({"ids": [f], "autoFit": true, "fitting": "fitProportionally", "crop": 10, "align": 0})).unwrap();
+        let graphic = |s: &Session| s.doc().unwrap().doc.item(designcraft_doc::ItemId(f)).unwrap().graphic().unwrap().clone();
+        let before = graphic(&s);
+        assert_ne!(before.auto_fit, designcraft_doc::Fitting::None);
+        s.execute("object.clearFittingOptions", &json!({"ids": [f]})).unwrap();
+        let g = graphic(&s);
+        assert_eq!(g.auto_fit, designcraft_doc::Fitting::None);
+        assert_eq!(g.crop, [0.0; 4]);
+        assert_eq!(g.fit_align, 4, "the centre reference point");
+        assert_eq!(g.xf, before.xf, "the picture stays where it is");
+        let undo = s.doc().unwrap().history.undo.len();
+        let r = s.execute("object.clearFittingOptions", &json!({"ids": [f]})).unwrap();
+        assert_eq!((r["changed"].as_u64(), s.doc().unwrap().history.undo.len()), (Some(0), undo), "already clear: no change, no step");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(graphic(&s).crop, [10.0; 4], "one undo step");
+        s.execute("object.lock", &json!({"ids": [f]})).unwrap();
+        let undo = s.doc().unwrap().history.undo.len();
+        let r = s.execute("object.clearFittingOptions", &json!({"ids": [f]})).unwrap();
+        assert_eq!(r["changed"], 0);
+        assert_eq!(graphic(&s).crop, [10.0; 4], "a locked frame keeps its options");
+        assert_eq!(s.doc().unwrap().history.undo.len(), undo, "no empty undo step");
     }
 }
 
