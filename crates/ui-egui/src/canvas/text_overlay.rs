@@ -266,6 +266,8 @@ fn draw_inverse_highlight(
 }
 
 /// View → Show Hidden Characters: ¶ paragraph ends, » tabs, · spaces, ¬ forced line breaks, # end of story.
+/// As InDesign, every table cell shows its own marks (an empty cell its #), and a table's
+/// paragraph return sits after the table's bottom right corner.
 pub(super) fn draw_hidden_characters(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document, layout: &CanvasLayout) {
     for story in doc.stories.values() {
         let cs = app.session.cache.get(doc, story.id, None);
@@ -273,17 +275,39 @@ pub(super) fn draw_hidden_characters(app: &DesignApp, painter: &egui::Painter, x
             let (Some((a, _)), Some(it)) = (item_canvas_xf(doc, layout, ft.frame), doc.item(ft.frame)) else { continue };
             let m = a * doc.text_xf(it);
             let col = layer_color(doc, it);
-            for l in &ft.lines {
-                let size = (l.ascent * 0.75 * xf.zoom).clamp(6.0, 40.0) as f32;
-                let font = egui::FontId::proportional(size);
-                for (x, mark, centered) in hidden_marks(&story.text, l) {
-                    let p = xf.to_screen(m * Point::new(x, l.baseline));
-                    let align = if centered { egui::Align2::CENTER_BOTTOM } else { egui::Align2::LEFT_BOTTOM };
-                    painter.text(p, align, mark, font.clone(), col);
-                }
+            for (p, mark, centered, ascent) in frame_hidden_marks(&story.text, ft) {
+                let size = (ascent * 0.75 * xf.zoom).clamp(6.0, 40.0) as f32;
+                let align = if centered { egui::Align2::CENTER_BOTTOM } else { egui::Align2::LEFT_BOTTOM };
+                painter.text(xf.to_screen(m * p), align, mark, egui::FontId::proportional(size), col);
             }
         }
     }
+}
+
+/// A frame's hidden-character marks in frame space (position at the baseline, mark, centered,
+/// the line's ascent): its lines' marks, then its tables' — each text cell's own marks (nested
+/// tables included) with its # where its text ends, and a table paragraph's ¶ after the last
+/// row's bottom right corner. A table's own glyph-less line has no marks: its ¶ is that one.
+pub(super) fn frame_hidden_marks(text: &str, ft: &compose::FrameText) -> Vec<(Point, &'static str, bool, f64)> {
+    let table_lines: Vec<usize> = ft.tables.iter().map(|t| t.line).collect();
+    let mut out: Vec<_> = ft
+        .lines
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !table_lines.contains(i))
+        .flat_map(|(_, l)| hidden_marks(text, l).into_iter().map(move |(x, mark, c)| (Point::new(x, l.baseline), mark, c, l.ascent)))
+        .collect();
+    for t in &ft.tables {
+        for c in t.cells.iter().filter(|c| c.graphic.is_none()) {
+            if let Some(cf) = c.text.frames.first() {
+                out.extend(frame_hidden_marks(&c.source, cf).into_iter().map(|(p, mark, centered, a)| (p + c.origin.to_vec2(), mark, centered, a)));
+            }
+        }
+        if t.last {
+            out.push((Point::new(t.rect.x1 + 1.0, t.rect.y1), "¶", false, 12.0));
+        }
+    }
+    out
 }
 
 /// The hidden-character marks on line `l` of a story with text `text`: frame-space x, mark, and

@@ -646,7 +646,7 @@ fn empty_menu(app: &mut DesignApp, ui: &mut egui::Ui) {
     let cur = crate::canvas::current_page(app).unwrap_or(0);
     let item = |ui: &mut egui::Ui, label: &str| ui.button(crate::rtl::widget(ui, crate::i18n::tr(&lang, label))).clicked();
     if item(ui, "Insert Pages…") {
-        app.ui.dialog = Some(crate::dialogs::Dialog::new("cmd:layout.pages.insert", json!({"after": cur, "count": 1})));
+        crate::dialogs::open_insert_pages(app, cur);
         ui.close();
     }
     if item(ui, "Move Pages…") {
@@ -680,7 +680,7 @@ fn page_menu(app: &mut DesignApp, ui: &mut egui::Ui, doc: &designcraft_doc::Docu
     let item = |ui: &mut egui::Ui, label: &str| ui.button(crate::rtl::widget(ui, tr(label))).clicked();
     // InDesign's order: pages, parents, layouts and numbering, shuffling.
     if item(ui, "Insert Pages…") {
-        app.ui.dialog = Some(crate::dialogs::Dialog::new("cmd:layout.pages.insert", json!({"after": abs, "count": 1})));
+        crate::dialogs::open_insert_pages(app, abs);
         ui.close();
     }
     if item(ui, "Move Pages…") {
