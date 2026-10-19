@@ -549,7 +549,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
             // Where it is, beside the pointer (#1282).
             if let Some(text) = guide_readout(app, &xf, &g) {
                 let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), t.text);
-                let at = p + vec2(12.0, 12.0);
+                let at = readout_at(p, galley.size(), rect);
                 let bg = Rect::from_min_size(at, galley.size()).expand(3.0);
                 painter.rect_filled(bg, 2.0, t.panel);
                 painter.rect_stroke(bg, 2.0, Stroke::new(1.0, t.border), StrokeKind::Inside);
@@ -2858,6 +2858,18 @@ fn guide_readout(app: &DesignApp, xf: &Xf, g: &GuideDrag) -> Option<String> {
     Some(format!("{label}: {}", designcraft_geom::units::format_measure(value, unit)))
 }
 
+/// Where a pointer readout of `size` goes for a pointer at `p`: below right of it, on the other
+/// side where that would leave the canvas `area` (near its right or bottom edge), and kept inside
+/// it (with the label's 3-point frame) however small the canvas is.
+fn readout_at(p: Pos2, size: egui::Vec2, area: Rect) -> Pos2 {
+    const GAP: f32 = 12.0;
+    const PAD: f32 = 3.0;
+    let x = if p.x + GAP + size.x + PAD > area.max.x { p.x - GAP - size.x } else { p.x + GAP };
+    let y = if p.y + GAP + size.y + PAD > area.max.y { p.y - GAP - size.y } else { p.y + GAP };
+    let clamp = |v: f32, lo: f32, hi: f32| if hi < lo { lo } else { v.clamp(lo, hi) };
+    pos2(clamp(x, area.min.x + PAD, area.max.x - PAD - size.x), clamp(y, area.min.y + PAD, area.max.y - PAD - size.y))
+}
+
 /// [`guide_readout`]'s parts: the axis label, the value (points) and its unit.
 fn guide_measure(app: &DesignApp, xf: &Xf, g: &GuideDrag) -> Option<(&'static str, f64, designcraft_geom::Unit)> {
     let p = g.at?;
@@ -4107,6 +4119,29 @@ mod tests {
         assert_eq!(g.orientation, designcraft_doc::Orientation::Horizontal);
         assert!(guide_readout(h.state(), &xf, &g).is_some_and(|t| t.starts_with("Y: ")));
         primary(&mut h, dest, false);
+    }
+
+    /// The guide readout stays on the canvas: below right of the pointer in the open, flipped
+    /// left or up near the right or bottom edge, and inside the canvas in every corner.
+    #[test]
+    fn the_guide_readout_stays_inside_the_canvas() {
+        let area = Rect::from_min_max(pos2(50.0, 40.0), pos2(850.0, 640.0));
+        let size = vec2(80.0, 14.0);
+        let inside = |at: Pos2| {
+            let r = Rect::from_min_size(at, size).expand(3.0);
+            r.min.x >= area.min.x - 1e-3 && r.min.y >= area.min.y - 1e-3 && r.max.x <= area.max.x + 1e-3 && r.max.y <= area.max.y + 1e-3
+        };
+        assert_eq!(readout_at(pos2(400.0, 300.0), size, area), pos2(412.0, 312.0), "in the open: below right");
+        let right = readout_at(pos2(845.0, 300.0), size, area);
+        assert!(right.x + size.x < 845.0 && inside(right), "near the right edge: left of the pointer, {right:?}");
+        let bottom = readout_at(pos2(400.0, 636.0), size, area);
+        assert!(bottom.y + size.y < 636.0 && inside(bottom), "near the bottom: above it, {bottom:?}");
+        for p in [area.min, pos2(area.max.x, area.min.y), area.max, pos2(area.min.x, area.max.y), pos2(-500.0, 2000.0)] {
+            assert!(inside(readout_at(p, size, area)), "{p:?}");
+        }
+        // A canvas narrower than the label: pinned to its top left, not past it.
+        let tiny = Rect::from_min_max(pos2(0.0, 0.0), pos2(40.0, 10.0));
+        assert_eq!(readout_at(pos2(20.0, 5.0), size, tiny), pos2(3.0, 3.0));
     }
 
     #[test]
