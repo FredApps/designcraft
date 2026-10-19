@@ -1010,6 +1010,7 @@ impl DesignApp {
         Ok(Value::Null)
     }
 
+    /// Open the import options needed by a single local file.
     fn place_path(&mut self, path: &str) -> Result<Value, String> {
         if path.to_ascii_lowercase().ends_with(".pdf") {
             let pages = self.services.read.as_mut().and_then(|r| r(path).ok()).and_then(|b| designcraft_render::pdf_page_count(&b)).unwrap_or(1);
@@ -1024,6 +1025,7 @@ impl DesignApp {
         self.place_file(json!({"path": path}))
     }
 
+    /// Load an ordered batch, retaining single-file import dialogs where needed.
     fn place_paths(&mut self, paths: Vec<String>) {
         let mut images = Vec::new();
         for path in paths {
@@ -1088,6 +1090,7 @@ impl DesignApp {
 
     /// A single unresolved PDF owns its bytes. Later deliveries cancel explicitly rather than
     /// replacing its options. Cancellation, replacement and target closure release its payload.
+    /// Group completed browser imports by target document before changing its cursor.
     fn drain_inbox(&mut self) {
         if let Some(file) = &self.pending_pdf {
             let target_exists = self.session.documents().iter().any(|d| Some(d.uid) == file.request.target);
@@ -1121,7 +1124,7 @@ impl DesignApp {
                 continue;
             }
             if self.ui.dialog.is_some() {
-                self.status("Image import cancelled while a dialog is open");
+                self.status(crate::i18n::tr(&self.ui.language, "Image import cancelled while a dialog is open"));
                 continue;
             }
             if self.activate_import_target(&ImportRequest { target, purpose }).is_err() {
@@ -1805,6 +1808,7 @@ pub fn cjk_features(app: &DesignApp) -> bool {
     app.session.prefs.cjk_features.unwrap_or_else(|| i18n::is_cjk(&app.ui.language))
 }
 
+/// Recognize raster formats that can share the multi-image placement cursor.
 fn is_cursor_image(name: &str) -> bool {
     std::path::Path::new(name).extension().and_then(|e| e.to_str()).is_some_and(|e| {
         matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tif" | "tiff" | "svg" | "psd" | "eps")
@@ -2936,6 +2940,51 @@ mod browser_import_tests {
         let result = dialogs::confirm(&mut app).unwrap();
         assert_eq!(result["images"], 3);
         assert_eq!(result["pages"], 1);
+    }
+
+    #[test]
+    fn batch_cancel_status_uses_the_interface_language() {
+        let mut app = app();
+        app.ui.language = "de".into();
+        app.ui.dialog = Some(dialogs::Dialog::new("contactSheet", json!({})));
+        let request = app.import_request("place");
+        let png = designcraft_render::Rendered { width: 10, height: 10, pixels: vec![200; 400] }.to_png();
+        for name in ["one.png", "two.png"] {
+            app.services.inbox.as_ref().unwrap().lock().unwrap().push(ImportedFile {
+                request: request.clone(),
+                name: name.into(),
+                bytes: png.clone(),
+            });
+        }
+        app.drain_inbox();
+        assert_eq!(app.ui.status, "Bildimport bei geöffnetem Dialog abgebrochen");
+        assert!(app.ui.dialog.is_some());
+        assert!(app.session.loaded.is_none());
+    }
+
+    #[test]
+    fn contact_sheet_validation_preserves_fields_and_pending_images() {
+        let mut app = app();
+        let request = app.import_request("place");
+        let png = designcraft_render::Rendered { width: 10, height: 10, pixels: vec![200; 400] }.to_png();
+        deliver(&mut app, request, "image.png", png);
+        app.run("app.contactSheetDialog", json!({})).unwrap();
+        let before = app.session.doc().unwrap().doc.clone();
+        for (field, value) in [("rows", "bad"), ("rows", "0"), ("rows", "4"), ("margin", "999999pt")] {
+            app.ui.dialog.as_mut().unwrap().fields.insert(field.into(), json!(value));
+            if field == "rows" && value == "4" {
+                continue;
+            }
+            assert!(dialogs::confirm(&mut app).is_err());
+            let dialog = app.ui.dialog.as_ref().unwrap();
+            assert_eq!(dialog.s(field), value);
+            assert!(!dialog.s("status").is_empty());
+            assert!(std::sync::Arc::ptr_eq(&before, &app.session.doc().unwrap().doc));
+            assert!(app.session.loaded.is_some());
+        }
+        app.ui.dialog.as_mut().unwrap().fields.insert("margin".into(), json!("36pt"));
+        assert!(dialogs::confirm(&mut app).is_ok());
+        assert!(app.ui.dialog.is_none());
     }
 
     #[test]

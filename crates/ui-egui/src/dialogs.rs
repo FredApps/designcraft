@@ -2366,6 +2366,9 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                     "preferences" => preferences(app, ui, &mut d, body_height),
                     "print" => print_dialog(app, ui, &mut d),
                     "contactSheet" => {
+                        if !d.s("status").is_empty() {
+                            ui.label(d.s("status"));
+                        }
                         ui.label("Place loaded images on new pages, in file order.");
                         for (label, key) in [("Columns", "columns"), ("Rows", "rows"), ("Gutter", "gutter"), ("Page margin", "margin")] {
                             ui.horizontal(|ui| {
@@ -3277,12 +3280,20 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             app.canvas.shown = None;
             Ok(r)
         }
-        "contactSheet" => app.run(
-            "place.contactSheet",
-            json!({"columns": d.s("columns").parse::<u64>().map_err(|_| "Columns must be a whole number")?,
-                "rows": d.s("rows").parse::<u64>().map_err(|_| "Rows must be a whole number")?,
-                "gutter": d.m("gutter").ok_or("Enter a valid gutter")?, "margin": d.m("margin").ok_or("Enter a valid margin")?}),
-        ),
+        "contactSheet" => {
+            let result = (|| {
+                let params = json!({"columns": d.s("columns").parse::<u64>().map_err(|_| "Columns must be a whole number")?,
+                    "rows": d.s("rows").parse::<u64>().map_err(|_| "Rows must be a whole number")?,
+                    "gutter": d.m("gutter").ok_or("Enter a valid gutter")?, "margin": d.m("margin").ok_or("Enter a valid margin")?});
+                app.run("place.contactSheet", params)
+            })();
+            if let Err(error) = &result {
+                let mut d = d;
+                d.fields.insert("status".into(), json!(error));
+                app.ui.dialog = Some(d);
+            }
+            result
+        }
         "pdfImport" => {
             let crop = d.s("crop");
             if d.b("async") {

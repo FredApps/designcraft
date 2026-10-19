@@ -859,6 +859,7 @@ pub(crate) fn validate_placement(size: (f64, f64), frame: Rect, xf: Affine, comm
     Ok(())
 }
 
+/// Decode and validate the complete batch before replacing the placement cursor.
 fn place_load(s: &mut Session, p: &Value) -> Result<Value> {
     if p.get("files").is_none() {
         let (bytes, name, link) = read_source(p)?;
@@ -910,7 +911,7 @@ fn place_load(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"remaining": s.loaded_queue.len() + 1, "loaded": true}))
 }
 
-/// Adds `asset` to the document (with a fresh id) and loads it into the place cursor.
+/// Add a decoded asset with a fresh id, replacing the previous placement queue.
 fn load_cursor(s: &mut Session, mut asset: Asset, size: (f64, f64)) -> Result<Value> {
     let name = asset.name.clone();
     let (pw, ph) = asset.pixels.unwrap_or_default();
@@ -924,13 +925,23 @@ fn load_cursor(s: &mut Session, mut asset: Asset, size: (f64, f64)) -> Result<Va
     Ok(json!({"asset": aid.0, "name": name, "width": pw, "height": ph, "loaded": true}))
 }
 
-fn place_drop(s: &mut Session, p: &Value) -> Result<Value> {
-    let crate::LoadedGraphic { asset: aid, size: (nw, nh) } = s.loaded.ok_or_else(|| bad("place.drop", "nothing loaded in the place cursor"))?;
-    // Undo can remove the loaded graphic's asset.
-    if !s.doc()?.doc.assets.contains_key(&aid) {
+/// Cancel every pending image if Undo removed an asset used by the cursor.
+fn validate_place_cursor(s: &mut Session, command: &str) -> Result<()> {
+    let valid = s.loaded.is_some()
+        && s.loaded.iter().chain(s.loaded_queue.iter()).all(|image| s.doc().is_ok_and(|d| d.doc.assets.contains_key(&image.asset)));
+    if !valid {
         s.loaded = None;
-        return Err(bad("place.drop", "the loaded graphic is no longer in the document"));
+        s.loaded_queue.clear();
+        s.set_tool("selection");
+        return Err(bad(command, "the loaded graphic is no longer in the document"));
     }
+    Ok(())
+}
+
+/// Place the current image and advance the cursor only after success.
+fn place_drop(s: &mut Session, p: &Value) -> Result<Value> {
+    validate_place_cursor(s, "place.drop")?;
+    let crate::LoadedGraphic { asset: aid, size: (nw, nh) } = s.loaded.ok_or_else(|| bad("place.drop", "nothing loaded in the place cursor"))?;
     let sr = super::spread_param(p, "place.drop")?;
     let lid = s.doc()?.active_layer;
     let frame = super::id_param(p, "frame");
@@ -991,6 +1002,7 @@ fn place_drop(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(r)
 }
 
+/// Advance in file order, returning to selection when the queue is exhausted.
 fn advance_place_cursor(s: &mut Session) {
     s.loaded = s.loaded_queue.pop_front();
     if s.loaded.is_none() {
@@ -998,6 +1010,7 @@ fn advance_place_cursor(s: &mut Session) {
     }
 }
 
+/// Validate bounded grid dimensions and a finite nonnegative gutter.
 fn grid_dimensions(p: &Value, default_columns: usize, default_rows: usize) -> Result<(usize, usize, f64)> {
     let dimension = |key, default| -> Result<usize> {
         match p.get(key) {
@@ -1016,6 +1029,7 @@ fn grid_dimensions(p: &Value, default_columns: usize, default_rows: usize) -> Re
     Ok((dimension("columns", default_columns)?, dimension("rows", default_rows)?, gutter))
 }
 
+/// Calculate row-major cells, rejecting gutters that leave no usable space.
 fn grid_cells(rect: Rect, columns: usize, rows: usize, gutter: f64) -> Result<Vec<Rect>> {
     let w = (rect.width() - gutter * (columns - 1) as f64) / columns as f64;
     let h = (rect.height() - gutter * (rows - 1) as f64) / rows as f64;
@@ -1033,6 +1047,7 @@ fn grid_cells(rect: Rect, columns: usize, rows: usize, gutter: f64) -> Result<Ve
         .collect())
 }
 
+/// Insert a proportionally fitted image into one grid cell.
 fn insert_grid_image(
     d: &mut Document,
     spread: designcraft_doc::SpreadRef,
@@ -1068,7 +1083,9 @@ fn insert_grid_image(
     Ok(id)
 }
 
+/// Place a row-major grid as one undoable edit.
 fn place_grid(s: &mut Session, p: &Value) -> Result<Value> {
+    validate_place_cursor(s, "place.grid")?;
     let (columns, rows, gutter) = grid_dimensions(p, 1, 1)?;
     let rect = super::rect_param(p, "rect").ok_or_else(|| bad("place.grid", "missing rect"))?;
     let cells = grid_cells(rect, columns, rows, gutter)?;
@@ -1092,7 +1109,9 @@ fn place_grid(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"ids": ids.iter().map(|id| id.0).collect::<Vec<_>>(), "remaining": s.loaded_queue.len() + usize::from(s.loaded.is_some())}))
 }
 
+/// Place all queued images on new pages as one undoable edit.
 fn place_contact_sheet(s: &mut Session, p: &Value) -> Result<Value> {
+    validate_place_cursor(s, "place.contactSheet")?;
     let (columns, rows, gutter) = grid_dimensions(p, 3, 4)?;
     let margin = f64_or(p, "margin", 36.0);
     if !margin.is_finite() || margin < 0.0 {

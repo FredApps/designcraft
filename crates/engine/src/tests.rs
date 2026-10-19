@@ -1749,3 +1749,21 @@ fn place_drag_arrows_make_three_by_four_grid_and_escape_cancels() {
     s.tool_key(ToolKey::Escape, Mods::default(), v).unwrap();
     assert!(s.loaded.is_none());
 }
+
+#[test]
+fn undoing_loaded_assets_cancels_every_placement_cursor() {
+    for command in ["place.drop", "place.grid", "place.contactSheet"] {
+        let mut s = session();
+        load_test_images(&mut s, 3);
+        s.execute("edit.undo", &json!({})).unwrap();
+        let before = s.doc().unwrap().doc.clone();
+        let params = if command == "place.contactSheet" { json!({}) } else { json!({"rect": [0, 0, 200, 200]}) };
+        assert!(s.execute(command, &params).is_err(), "{command}");
+        assert!(s.loaded.is_none(), "{command}");
+        assert!(s.loaded_queue.is_empty(), "{command}");
+        assert_eq!(s.tool_id(), "selection");
+        assert!(std::sync::Arc::ptr_eq(&before, &s.doc().unwrap().doc));
+        load_test_images(&mut s, 2);
+        assert!(s.execute("place.drop", &json!({"x": 0, "y": 0})).is_ok());
+    }
+}

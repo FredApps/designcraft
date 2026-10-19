@@ -36,6 +36,36 @@ pub const LANGUAGES: &[(&str, &str)] = &[
 
 /// English → [German, French, Spanish, Japanese, Simplified Chinese].
 const TABLE: &[(&str, [&str; 5])] = &[
+    (
+        "1 image · drag + arrows for grid",
+        [
+            "1 Bild · Ziehen + Pfeiltasten für Raster",
+            "1 image · glisser + flèches pour une grille",
+            "1 imagen · arrastrar + flechas para cuadrícula",
+            "画像1枚 · ドラッグ＋矢印キーでグリッド",
+            "1 张图像 · 拖动并按方向键创建网格",
+        ],
+    ),
+    (
+        "{count} images · drag + arrows for grid",
+        [
+            "{count} Bilder · Ziehen + Pfeiltasten für Raster",
+            "{count} images · glisser + flèches pour une grille",
+            "{count} imágenes · arrastrar + flechas para cuadrícula",
+            "画像{count}枚 · ドラッグ＋矢印キーでグリッド",
+            "{count} 张图像 · 拖动并按方向键创建网格",
+        ],
+    ),
+    (
+        "Image import cancelled while a dialog is open",
+        [
+            "Bildimport bei geöffnetem Dialog abgebrochen",
+            "Importation des images annulée car une boîte de dialogue est ouverte",
+            "Importación de imágenes cancelada mientras hay un diálogo abierto",
+            "ダイアログが開いているため画像の読み込みをキャンセルしました",
+            "对话框打开时已取消图像导入",
+        ],
+    ),
     // Menus.
     ("File", ["Datei", "Fichier", "Archivo", "ファイル", "文件"]),
     ("Edit", ["Bearbeiten", "Édition", "Edición", "編集", "编辑"]),

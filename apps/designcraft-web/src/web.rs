@@ -357,14 +357,22 @@ impl eframe::App for WebShell {
                 let inbox = self.inbox.clone();
                 let ctx = ctx.clone();
                 wasm_bindgen_futures::spawn_local(async move {
-                    let mut files = Vec::new();
-                    for f in dropped {
-                        let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped".into());
-                        match f.bytes_async().await {
-                            Ok(bytes) => files.push(ImportedFile { request: request.clone(), name, bytes }),
-                            Err(e) => log::error!("couldn't read dropped file {name}: {e}"),
+                    let files = crate::browser_policy::read_batch(dropped, |f| {
+                        let request = request.clone();
+                        async move {
+                            let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped".into());
+                            let bytes = f.bytes_async().await.map_err(|e| format!("couldn't read dropped file {name}: {e}"))?;
+                            Ok::<_, String>(ImportedFile { request, name, bytes })
                         }
-                    }
+                    })
+                    .await;
+                    let files = match files {
+                        Ok(files) => files,
+                        Err(error) => {
+                            log::error!("{error}");
+                            return;
+                        }
+                    };
                     inbox.lock().unwrap_or_else(|e| e.into_inner()).extend(files);
                     ctx.request_repaint();
                 });
