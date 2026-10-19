@@ -370,8 +370,8 @@ pub struct Contour {
 /// Points a contour outline may have; a larger outline wraps around its bounding box.
 const MAX_CONTOUR_POINTS: usize = 8192;
 
-/// The next line's ascent, as a fraction of the point size, that must clear an inline equation
-/// hanging below the line above (see where `cur.pending` is set after a line).
+/// The next line's ascent, as a fraction of its text size, that must clear an inline equation
+/// hanging below the line above (see `Cursor::hang`).
 const NEXT_LINE_ASCENT: f64 = 0.72;
 /// Gap, in points, kept between such an object's bottom and the next line's ascent.
 const INLINE_OBJECT_CLEARANCE: f64 = 0.5;
@@ -818,6 +818,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
         last_reference: 0.0,
         aki_below: None,
         pending: 0.0,
+        hang: None,
         pi: 0,
         band: Band::default(),
         limits: Rc::default(),
@@ -1488,10 +1489,12 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                 // The line takes the next segment of a line already placed, the one the breaker
                 // set it for.
                 let mut continues = false;
+                let mut carried = false;
                 let mut baseline = carry_baseline;
                 let mut grid_end = None;
                 if let Some(i) = carry.iter().position(holds) {
                     continues = i == 0;
+                    carried = true;
                     grid_end = carry_grid;
                     (x0, x1) = carry.get(i).copied().unwrap_or((x0, x1));
                     carry.drain(..=i);
@@ -1500,6 +1503,13 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     baseline = cur.next_baseline(f, col, advance, asc, tops, &pp);
                     if cur.last_baseline.is_some() {
                         baseline += cur.last_reference - reference;
+                        // Below an inline equation hanging from the line above: this line's own
+                        // text-height ascent (or its cap height, if taller) clears the equation.
+                        if let Some(hang) = cur.hang {
+                            let size = line_glyphs.iter().filter(|g| g.ch != designcraft_doc::OBJECT_MARK).map(|g| g.size).fold(0.0, f64::max);
+                            let size = if size > 0.0 { size } else { base_chars.size };
+                            baseline = baseline.max(hang + (size * NEXT_LINE_ASCENT).max(tops.cap) + INLINE_OBJECT_CLEARANCE);
+                        }
                     }
                     // Baseline grid: grid alignment and gyoudori (see `grid`).
                     let grid = f.grid.filter(|&(_, inc)| {
@@ -1808,8 +1818,8 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                 cur.aki_below = (model == designcraft_doc::cjk::LeadingModel::AkiBelow).then_some(lead);
                 cur.last_descent = desc;
                 // An inline equation that hangs below the text's descender (a deep fraction,
-                // stacked limits) would run into the next line: hold that line down until a
-                // text-height ascent clears its bottom. Other inline objects keep overlapping, as
+                // stacked limits) would run into the next line: hold that line down until its
+                // text-height ascent clears the equation's bottom (`Cursor::hang`). Other inline objects keep overlapping, as
                 // they do in IDML layouts (they paint under the text instead, #1238).
                 let text_desc = line_glyphs.iter().filter(|g| g.ch != designcraft_doc::OBJECT_MARK).map(|g| g.descent).fold(0.0, f64::max);
                 let obj_desc = line_glyphs
@@ -1818,11 +1828,14 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     .filter(|g| sub_objects.get(&g.byte).and_then(|o| story.objects.get(o.index)).is_some_and(|a| is_equation(&a.item)))
                     .map(|g| g.descent)
                     .fold(0.0, f64::max);
-                cur.pending = if obj_desc > text_desc {
-                    (obj_desc + base_chars.size * NEXT_LINE_ASCENT + INLINE_OBJECT_CLEARANCE - base_leading).max(0.0)
-                } else {
-                    0.0
+                let hang = (obj_desc > text_desc).then_some(baseline + obj_desc);
+                // Another segment of the same line keeps the lowest equation of them all.
+                cur.hang = match (carried, cur.hang, hang) {
+                    (true, Some(a), Some(b)) => Some(a.max(b)),
+                    (true, a, b) => a.or(b),
+                    (false, _, b) => b,
                 };
+                cur.pending = 0.0;
                 cur.grid_next = grid_end.map(|end| (baseline, end));
                 line_no += 1;
                 // A column / frame / page break inside the paragraph: the rest of it continues in the
@@ -2484,6 +2497,10 @@ struct Cursor {
     aki_below: Option<f64>,
     /// Space before/after waiting to be added to the next line.
     pending: f64,
+    /// The bottom of the lowest inline equation hanging below the text of the line above (of all
+    /// its segments): the next line is held down until its ascent clears it. Kept apart from
+    /// `pending`, so paragraph spacing doesn't replace it.
+    hang: Option<f64>,
     /// The paragraph being laid.
     pi: usize,
     /// The band of columns the cursor is in.
@@ -2754,6 +2771,7 @@ impl Cursor {
         self.last_reference = r.last_reference;
         self.aki_below = r.aki_below;
         self.pending = r.pending;
+        self.hang = None;
     }
     /// Within a split block, the next sub-column when there's one to go to.
     fn can_next_sub(&self) -> bool {
@@ -2771,6 +2789,7 @@ impl Cursor {
     }
     /// Start the current column at the top of the band.
     fn resume(&mut self) {
+        self.hang = None;
         match self.band.above {
             Some(a) => {
                 self.last_baseline = Some(a.baseline);

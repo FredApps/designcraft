@@ -7342,3 +7342,62 @@ fn an_inline_equation_hanging_below_the_line_pushes_the_next_line_down() {
     let (lines, _, _) = compose(24.0, -12.0, false);
     assert!((lines[1] - lines[0] - pitch).abs() < 1e-6, "{lines:?}");
 }
+
+#[test]
+fn inline_equation_clearance_holds_across_paragraphs_wrap_segments_and_sizes() {
+    use designcraft_doc::{AnchorPosition, AnchoredObject, CharAttrs, Content, Graphic, Item, Leading, Shape};
+    // A 24pt-deep equation lowered 12pt below the baseline at byte `at` of `sid`.
+    let insert_equation = |d: &mut Document, sid: StoryId, at: usize| {
+        let mut item =
+            Item::new(ItemId(d.alloc()), d.default_layer(), Shape::Rectangle, designcraft_geom::shapes::rectangle(Rect::new(0.0, 0.0, 20.0, 24.0)));
+        item.name = "Math".into();
+        item.alt_text = r"\frac{a}{b}".into();
+        item.content = Content::Graphic(Graphic {
+            asset: designcraft_doc::AssetId(0),
+            size: (20.0, 24.0),
+            xf: designcraft_geom::Affine::IDENTITY,
+            clip: None,
+            auto_fit: Default::default(),
+            fit_align: 4,
+            crop: [0.0; 4],
+            wrap: Default::default(),
+            fill: Default::default(),
+        });
+        d.story_mut(sid).unwrap().insert_object(at, AnchoredObject::new(item, AnchorPosition::Inline { y_offset: -12.0 }));
+    };
+    let bottom_and_lines = |d: &Document, sid: StoryId| {
+        let cs = compose_story(d, sid, &ComposeOptions::default());
+        let o = &cs.frames[0].objects[0];
+        (o.origin.y + o.size.1, all_lines(&cs).iter().map(|l| l.baseline).collect::<Vec<f64>>())
+    };
+    let clears = |top: f64, bottom: f64| top >= bottom + super::INLINE_OBJECT_CLEARANCE - 1e-6;
+
+    // The next paragraph has the same style and a same-style spacing: the spacing replaces the
+    // paragraph's space, not the equation's clearance.
+    let para = ParaAttrs { same_para_style_spacing: Some(Some(0.0)), ..Default::default() };
+    let (mut d, sid, _) = doc_with("Ab\nCd", Rect::new(0.0, 0.0, 300.0, 400.0), para);
+    insert_equation(&mut d, sid, 1);
+    let (bottom, lines) = bottom_and_lines(&d, sid);
+    assert!(clears(lines[1] - 12.0 * super::NEXT_LINE_ASCENT, bottom), "{lines:?} {bottom}");
+
+    // The next line is 24pt text with a tight 10pt leading: its own, taller ascent clears it.
+    let (mut d, sid, _) = doc_with("Ab\nCd", Rect::new(0.0, 0.0, 300.0, 400.0), ParaAttrs::default());
+    d.story_mut(sid).unwrap().paras[1].chars = CharAttrs { size: Some(24.0), leading: Some(Leading::Points(10.0)), ..Default::default() };
+    insert_equation(&mut d, sid, 1);
+    let (bottom, lines) = bottom_and_lines(&d, sid);
+    assert!(clears(lines[1] - 24.0 * super::NEXT_LINE_ASCENT, bottom), "{lines:?} {bottom}");
+
+    // A wrap splits the first line in two segments; the equation is in the first one. The second
+    // segment, set at the same baseline, keeps the clearance for the next line.
+    let (mut d, sid, _) = doc_with(LOREM, Rect::new(0.0, 0.0, 300.0, 400.0), ParaAttrs::default());
+    let lid = d.default_layer();
+    let mut wrap = Item::new(ItemId(d.alloc()), lid, Shape::Rectangle, designcraft_geom::shapes::rectangle(Rect::new(130.0, 0.0, 170.0, 200.0)));
+    wrap.wrap.mode = WrapMode::BoundingBox;
+    wrap.wrap.side = WrapSide::BothSides;
+    d.insert_item(SpreadRef::Doc(0), wrap, None).unwrap();
+    insert_equation(&mut d, sid, 6);
+    let (bottom, lines) = bottom_and_lines(&d, sid);
+    assert!(lines.len() > 2 && (lines[1] - lines[0]).abs() < 1e-6, "two segments on the first line: {lines:?}");
+    let next = lines.iter().copied().find(|&b| b > lines[0] + 1e-6).unwrap();
+    assert!(clears(next - 12.0 * super::NEXT_LINE_ASCENT, bottom), "{lines:?} {bottom}");
+}
