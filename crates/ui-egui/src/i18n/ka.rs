@@ -21,6 +21,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Save As…", "შენახვა როგორც…"),
     ("Save a Copy…", "ასლის შენახვა…"),
     ("Revert", "წინა ვერსიაზე დაბრუნება"),
+    ("Place Contact Sheet…", "საკონტაქტო ფურცლის განთავსება…"),
+    ("Place Contact Sheet", "საკონტაქტო ფურცლის განთავსება"),
     ("Place…", "განთავსება…"),
     ("Export PDF…", "PDF ექსპორტი…"),
     ("Print…", "დაბეჭდვა…"),

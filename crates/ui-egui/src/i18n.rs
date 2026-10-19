@@ -78,6 +78,14 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Save As…", ["Speichern unter …", "Enregistrer sous…", "Guardar como…", "別名で保存…", "另存为…"]),
     ("Save a Copy…", ["Kopie speichern …", "Enregistrer une copie…", "Guardar una copia…", "コピーを保存…", "保存副本…"]),
     ("Revert", ["Zurück zur letzten Version", "Version précédente", "Volver a la versión guardada", "復帰", "恢复到上次保存"]),
+    (
+        "Place Contact Sheet…",
+        ["Kontaktbogen platzieren…", "Importer une planche-contact…", "Colocar hoja de contactos…", "コンタクトシートを配置…", "置入联系表…"],
+    ),
+    (
+        "Place Contact Sheet",
+        ["Kontaktbogen platzieren", "Importer une planche-contact", "Colocar hoja de contactos", "コンタクトシートを配置", "置入联系表"],
+    ),
     ("Place…", ["Platzieren …", "Importer…", "Colocar…", "配置…", "置入…"]),
     ("Export PDF…", ["PDF exportieren …", "Exporter en PDF…", "Exportar PDF…", "PDF を書き出し…", "导出PDF…"]),
     ("Print…", ["Drucken …", "Imprimer…", "Imprimir…", "プリント…", "打印…"]),

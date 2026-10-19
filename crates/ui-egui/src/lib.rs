@@ -46,6 +46,7 @@ pub use control::{ControlRequest, ControlResponse};
 
 pub type ReadFn = Box<dyn Fn(&str) -> Result<Vec<u8>, String>>;
 pub type WriteFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
+pub type PickManyFn = Box<dyn FnMut(&str) -> Option<Vec<String>>>;
 pub type PickFn = Box<dyn FnMut(&str) -> Option<String>>;
 /// Context captured before any host file-picker or read await.
 #[derive(Clone, Debug)]
@@ -70,6 +71,8 @@ pub type Inbox = std::sync::Arc<std::sync::Mutex<Vec<ImportedFile>>>;
 pub struct Services {
     /// Open-file dialog for a purpose (`open`, `place`) → path.
     pub pick_open: Option<PickFn>,
+    /// Multi-file Place picker; other open operations use `pick_open`.
+    pub pick_many: Option<PickManyFn>,
     /// Save dialog with a suggested name → path.
     pub pick_save: Option<PickFn>,
     pub read: Option<ReadFn>,
@@ -966,6 +969,20 @@ impl DesignApp {
     /// Ask the host for a file to open (`open`) or place (`place`). Synchronous pickers run the
     /// command right away; asynchronous ones (web) deliver the file through the inbox.
     pub fn pick_and_open(&mut self, purpose: &str) -> Result<Value, String> {
+        if purpose == "place"
+            && let Some(pick) = self.services.pick_many.as_mut()
+        {
+            if let Some(paths) = pick(purpose) {
+                if paths.len() == 1 {
+                    if let Some(path) = paths.first() {
+                        return self.place_path(path);
+                    }
+                } else {
+                    self.place_paths(paths);
+                }
+            }
+            return Ok(Value::Null);
+        }
         let target = self.session.active().map(|d| d.uid);
         if let Some(pick) = self.services.pick_open.as_mut() {
             return match pick(purpose) {
@@ -991,6 +1008,35 @@ impl DesignApp {
             open(request);
         }
         Ok(Value::Null)
+    }
+
+    fn place_path(&mut self, path: &str) -> Result<Value, String> {
+        if path.to_ascii_lowercase().ends_with(".pdf") {
+            let pages = self.services.read.as_mut().and_then(|r| r(path).ok()).and_then(|b| designcraft_render::pdf_page_count(&b)).unwrap_or(1);
+            if pages > 1 {
+                self.ui.dialog = Some(dialogs::Dialog::new(
+                    "pdfImport",
+                    json!({"path": path, "page": "1", "pages": pages, "target": self.session.active().map(|d| d.uid)}),
+                ));
+                return Ok(Value::Null);
+            }
+        }
+        self.place_file(json!({"path": path}))
+    }
+
+    fn place_paths(&mut self, paths: Vec<String>) {
+        let mut images = Vec::new();
+        for path in paths {
+            let image = is_cursor_image(&path);
+            if image {
+                images.push(json!({"path": path}));
+            } else {
+                let _ = self.place_path(&path);
+            }
+        }
+        if !images.is_empty() {
+            let _ = self.run("place.load", json!({"files": images}));
+        }
     }
 
     /// Load Styles: ask the host for a document whose styles to load; `kind` is `paragraph`,
@@ -1059,6 +1105,32 @@ impl DesignApp {
         }
         let Some(inbox) = self.services.inbox.clone() else { return };
         let files = std::mem::take(&mut *inbox.lock().unwrap_or_else(|e| e.into_inner()));
+        let (images, others): (Vec<_>, Vec<_>) = files.into_iter().partition(|file| {
+            matches!(file.request.purpose.as_str(), "place" | "drop")
+                && !file.name.to_ascii_lowercase().ends_with(".pdf")
+                && (is_cursor_image(&file.name) || designcraft_render::image_size(&file.bytes).is_some())
+        });
+        let mut groups = std::collections::BTreeMap::<(Option<u64>, String), Vec<ImportedFile>>::new();
+        for file in images {
+            groups.entry((file.request.target, file.request.purpose.clone())).or_default().push(file);
+        }
+        let mut files = others;
+        for ((target, purpose), group) in groups {
+            if group.len() == 1 {
+                files.extend(group);
+                continue;
+            }
+            if self.ui.dialog.is_some() {
+                self.status("Image import cancelled while a dialog is open");
+                continue;
+            }
+            if self.activate_import_target(&ImportRequest { target, purpose }).is_err() {
+                continue;
+            }
+            let sources: Vec<_> =
+                group.into_iter().map(|f| json!({"name": f.name, "base64": designcraft_engine::cmd::base64_encode(&f.bytes)})).collect();
+            let _ = self.run("place.load", json!({"files": sources}));
+        }
         for file in files {
             if self.ui.dialog.is_some() {
                 self.status(
@@ -1193,11 +1265,27 @@ impl DesignApp {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let (dropped, pointer) = ctx.input(|i| (i.raw.dropped_files.clone(), i.pointer.hover_pos()));
+            let mut images = Vec::new();
             for f in dropped {
-                let p = f.path().to_string_lossy().to_string();
-                if !p.is_empty() {
-                    let _ = self.open_dropped_at(&p, pointer);
+                let path = f.path().to_string_lossy().to_string();
+                let image = std::path::Path::new(&path).extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                    matches!(
+                        e.to_ascii_lowercase().as_str(),
+                        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tif" | "tiff" | "svg" | "psd" | "eps"
+                    )
+                });
+                if image {
+                    images.push(path);
+                } else if !path.is_empty() {
+                    let _ = self.open_dropped_at(&path, pointer);
                 }
+            }
+            if images.len() == 1 {
+                if let Some(path) = images.first() {
+                    let _ = self.open_dropped_at(path, pointer);
+                }
+            } else if !images.is_empty() {
+                self.place_paths(images);
             }
         }
         self.handle_quit(ctx);
@@ -1715,6 +1803,12 @@ impl DesignApp {
 /// in both editions and stay outside it.
 pub fn cjk_features(app: &DesignApp) -> bool {
     app.session.prefs.cjk_features.unwrap_or_else(|| i18n::is_cjk(&app.ui.language))
+}
+
+fn is_cursor_image(name: &str) -> bool {
+    std::path::Path::new(name).extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tif" | "tiff" | "svg" | "psd" | "eps")
+    })
 }
 
 /// Files that open as documents (when dropped or picked) rather than being placed: DesignCraft,
@@ -2820,6 +2914,49 @@ mod browser_import_tests {
     fn image() -> Vec<u8> {
         br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="#ff0000"/></svg>"##.to_vec()
     }
+    #[test]
+    fn multi_image_inbox_loads_one_queue_on_its_original_document() {
+        let mut app = app();
+        let request = app.import_request("place");
+        app.run("file.new", json!({"title": "B"})).unwrap();
+        let png = designcraft_render::Rendered { width: 10, height: 10, pixels: vec![200; 400] }.to_png();
+        for i in 0..3 {
+            app.services.inbox.as_ref().unwrap().lock().unwrap().push(ImportedFile {
+                request: request.clone(),
+                name: format!("{i}.png"),
+                bytes: png.clone(),
+            });
+        }
+        app.drain_inbox();
+        assert_eq!(app.session.doc().unwrap().uid, request.target.unwrap());
+        assert_eq!(app.session.tool_id(), "placeGun");
+        assert_eq!(app.session.loaded_queue.len(), 2);
+        assert!(app.session.documents()[1].doc.assets.is_empty());
+        app.run("app.contactSheetDialog", json!({})).unwrap();
+        let result = dialogs::confirm(&mut app).unwrap();
+        assert_eq!(result["images"], 3);
+        assert_eq!(result["pages"], 1);
+    }
+
+    #[test]
+    fn multi_image_inbox_cancels_when_original_document_closed() {
+        let mut app = app();
+        let request = app.import_request("place");
+        app.run("file.new", json!({"title": "B"})).unwrap();
+        app.run("file.close", json!({"index": 0})).unwrap();
+        let png = designcraft_render::Rendered { width: 10, height: 10, pixels: vec![200; 400] }.to_png();
+        for i in 0..2 {
+            app.services.inbox.as_ref().unwrap().lock().unwrap().push(ImportedFile {
+                request: request.clone(),
+                name: format!("{i}.png"),
+                bytes: png.clone(),
+            });
+        }
+        app.drain_inbox();
+        assert!(app.session.loaded.is_none());
+        assert!(app.session.doc().unwrap().doc.assets.is_empty());
+    }
+
     fn pdf_pages(count: usize) -> Vec<u8> {
         let kids = (0..count).map(|i| format!("{} 0 R", 3 + i * 2)).collect::<Vec<_>>().join(" ");
         let mut objects = vec!["<< /Type /Catalog /Pages 2 0 R >>".to_string(), format!("<< /Type /Pages /Kids [{kids}] /Count {count} >>")];
