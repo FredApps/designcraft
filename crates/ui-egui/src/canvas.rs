@@ -546,6 +546,15 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
             } else {
                 painter.line_segment([a, b], Stroke::new(1.0, col));
             }
+            // Where it is, beside the pointer (#1282).
+            if let Some(text) = guide_readout(app, &xf, &g) {
+                let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), t.text);
+                let at = p + vec2(12.0, 12.0);
+                let bg = Rect::from_min_size(at, galley.size()).expand(3.0);
+                painter.rect_filled(bg, 2.0, t.panel);
+                painter.rect_stroke(bg, 2.0, Stroke::new(1.0, t.border), StrokeKind::Inside);
+                painter.galley(at, galley, t.text);
+            }
         }
         draw_frames(app, &painter, &xf, &doc, &layout);
         if app.ui.hidden_characters {
@@ -2841,6 +2850,33 @@ struct GuideDrag {
     at: Option<Pos2>,
 }
 
+/// Where a dragged guide is, as the rulers measure it (#1282): `X: …` for a vertical guide, `Y: …`
+/// for a horizontal one, from the zero point (and the page origin, when rulers restart per page)
+/// in the document's ruler units. `None` with no document or rulers.
+fn guide_readout(app: &DesignApp, xf: &Xf, g: &GuideDrag) -> Option<String> {
+    let (label, value, unit) = guide_measure(app, xf, g)?;
+    Some(format!("{label}: {}", designcraft_geom::units::format_measure(value, unit)))
+}
+
+/// [`guide_readout`]'s parts: the axis label, the value (points) and its unit.
+fn guide_measure(app: &DesignApp, xf: &Xf, g: &GuideDrag) -> Option<(&'static str, f64, designcraft_geom::Unit)> {
+    let p = g.at?;
+    let st = app.session.active()?;
+    let layout = CanvasLayout::new(&st.doc, st.editing_parents);
+    let pieces = ruler_pieces(app, &st.doc, &layout, st.doc.zero_point());
+    let first = pieces.first()?;
+    let c = xf.to_canvas(p);
+    let (label, value, unit) = match g.orientation {
+        designcraft_doc::Orientation::Vertical => {
+            // The horizontal ruler restarts at each page: the piece under the guide measures it.
+            let o = pieces.iter().find(|(from, to, _)| *from <= c.x && c.x < *to).unwrap_or(first).2;
+            ("X", c.x - o.x, st.doc.settings.horizontal_units)
+        }
+        designcraft_doc::Orientation::Horizontal => ("Y", c.y - first.2.y, st.doc.settings.vertical_units),
+    };
+    value.is_finite().then_some((label, value, unit))
+}
+
 /// The guide under a screen point (within 3 px), as (spread, page, index, orientation).
 fn guide_at(app: &DesignApp, xf: &Xf, p: Pos2) -> Option<(designcraft_doc::SpreadRef, usize, usize, designcraft_doc::Orientation)> {
     let st = app.session.active()?;
@@ -4031,6 +4067,46 @@ mod tests {
         assert!((pos(designcraft_doc::Orientation::Vertical) - at.x).abs() < 0.5);
         assert!(guides.iter().all(|g| g.spread));
         assert_eq!(doc.settings.zero_point, [0.0, 0.0], "the zero point stays");
+    }
+
+    /// A guide being dragged out of a ruler says where it is, as the rulers measure it (#1282):
+    /// from the zero point, in the ruler units, and the label follows the pointer while it moves.
+    #[test]
+    fn a_dragged_guide_shows_where_it_is() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.run("view.zeroPoint", json!({"at": [100, 50]})).unwrap();
+        let mut h = harness(app);
+        let rect = h.state().canvas_rect.unwrap();
+        let dest = rect.min + vec2(160.0, 110.0);
+        let (xf, at) = {
+            let app = h.state();
+            let xf = Xf::new(rect, app.view().unwrap());
+            let st = app.session.active().unwrap();
+            (xf, CanvasLayout::new(&st.doc, false).spread_at(xf.to_canvas(dest)).unwrap().1)
+        };
+        let units = h.state().session.doc().unwrap().doc.settings.horizontal_units;
+        for (orientation, label, want) in
+            [(designcraft_doc::Orientation::Vertical, "X", at.x - 100.0), (designcraft_doc::Orientation::Horizontal, "Y", at.y - 50.0)]
+        {
+            let g = GuideDrag { orientation, from: None, at: Some(dest) };
+            let (l, v, _) = guide_measure(h.state(), &xf, &g).unwrap();
+            assert_eq!(l, label);
+            assert!((v - want).abs() < 1e-6, "{label}: {v} vs {want}");
+            let text = guide_readout(h.state(), &xf, &g).unwrap();
+            assert_eq!(text, format!("{label}: {}", designcraft_geom::units::format_measure(v, units)));
+        }
+        // While a guide is actually being dragged out of the top ruler, the readout is there.
+        let ruler = pos2(rect.min.x + 200.0, rect.min.y - RULER / 2.0);
+        h.hover_at(ruler);
+        h.step();
+        primary(&mut h, ruler, true);
+        h.event(egui::Event::PointerMoved(dest));
+        h.run_steps(2);
+        let g = h.ctx.data(|d| d.get_temp::<GuideDrag>(egui::Id::new(GUIDE_DRAG))).expect("dragging");
+        assert_eq!(g.orientation, designcraft_doc::Orientation::Horizontal);
+        assert!(guide_readout(h.state(), &xf, &g).is_some_and(|t| t.starts_with("Y: ")));
+        primary(&mut h, dest, false);
     }
 
     #[test]
