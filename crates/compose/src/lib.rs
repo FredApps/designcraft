@@ -370,6 +370,18 @@ pub struct Contour {
 /// Points a contour outline may have; a larger outline wraps around its bounding box.
 const MAX_CONTOUR_POINTS: usize = 8192;
 
+/// The next line's ascent, as a fraction of the point size, that must clear an inline equation
+/// hanging below the line above (see where `cur.pending` is set after a line).
+const NEXT_LINE_ASCENT: f64 = 0.72;
+/// Gap, in points, kept between such an object's bottom and the next line's ascent.
+const INLINE_OBJECT_CLEARANCE: f64 = 0.5;
+
+/// A math expression placed by `math.insert`: a graphic named "Math" carrying its LaTeX as
+/// alt text. Only these hold the next line clear of what they hang below the baseline.
+fn is_equation(item: &designcraft_doc::Item) -> bool {
+    item.name == "Math" && !item.alt_text.is_empty() && matches!(item.content, designcraft_doc::Content::Graphic(_))
+}
+
 impl Contour {
     /// The outline of `path` (after `to_inner`), flattened; None if it is empty or too detailed.
     fn of(path: &designcraft_geom::BezPath, to_inner: designcraft_geom::Affine, offset: f64) -> Option<Contour> {
@@ -1795,7 +1807,22 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                 cur.last_reference = reference;
                 cur.aki_below = (model == designcraft_doc::cjk::LeadingModel::AkiBelow).then_some(lead);
                 cur.last_descent = desc;
-                cur.pending = 0.0;
+                // An inline equation that hangs below the text's descender (a deep fraction,
+                // stacked limits) would run into the next line: hold that line down until a
+                // text-height ascent clears its bottom. Other inline objects keep overlapping, as
+                // they do in IDML layouts (they paint under the text instead, #1238).
+                let text_desc = line_glyphs.iter().filter(|g| g.ch != designcraft_doc::OBJECT_MARK).map(|g| g.descent).fold(0.0, f64::max);
+                let obj_desc = line_glyphs
+                    .iter()
+                    .filter(|g| g.ch == designcraft_doc::OBJECT_MARK)
+                    .filter(|g| sub_objects.get(&g.byte).and_then(|o| story.objects.get(o.index)).is_some_and(|a| is_equation(&a.item)))
+                    .map(|g| g.descent)
+                    .fold(0.0, f64::max);
+                cur.pending = if obj_desc > text_desc {
+                    (obj_desc + base_chars.size * NEXT_LINE_ASCENT + INLINE_OBJECT_CLEARANCE - base_leading).max(0.0)
+                } else {
+                    0.0
+                };
                 cur.grid_next = grid_end.map(|end| (baseline, end));
                 line_no += 1;
                 // A column / frame / page break inside the paragraph: the rest of it continues in the

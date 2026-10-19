@@ -7290,3 +7290,55 @@ fn greek_text_gets_greek_hyphenation() {
     let el = hyphen::Lang::for_language("Greek").unwrap();
     assert_eq!(hyphen::hyphen_points_in("ανθρωπος", &hyphen::Limits::default(), el), vec![2, 5]);
 }
+
+/// An inline equation hanging below the descender (a deep fraction or stacked limits) holds the
+/// next line down instead of overprinting it; one within the descender leaves the leading alone,
+/// and other inline objects keep overlapping as in IDML layouts.
+#[test]
+fn an_inline_equation_hanging_below_the_line_pushes_the_next_line_down() {
+    use designcraft_doc::{AnchorPosition, AnchoredObject, Content, Graphic, Item, Shape};
+    let text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.";
+    let compose = |h: f64, y_offset: f64, equation: bool| {
+        let (mut d, sid, _) = doc_with(text, Rect::new(0.0, 0.0, 150.0, 400.0), ParaAttrs::default());
+        let mut item =
+            Item::new(ItemId(d.alloc()), d.default_layer(), Shape::Rectangle, designcraft_geom::shapes::rectangle(Rect::new(0.0, 0.0, 20.0, h)));
+        if equation {
+            item.name = "Math".into();
+            item.alt_text = r"\frac{a}{b}".into();
+            item.content = Content::Graphic(Graphic {
+                asset: designcraft_doc::AssetId(0),
+                size: (20.0, h),
+                xf: designcraft_geom::Affine::IDENTITY,
+                clip: None,
+                auto_fit: Default::default(),
+                fit_align: 4,
+                crop: [0.0; 4],
+                wrap: Default::default(),
+                fill: Default::default(),
+            });
+        }
+        d.story_mut(sid).unwrap().insert_object(6, AnchoredObject::new(item, AnchorPosition::Inline { y_offset }));
+        let cs = compose_story(&d, sid, &ComposeOptions::default());
+        let lines: Vec<f64> = all_lines(&cs).iter().map(|l| l.baseline).collect();
+        let o = &cs.frames[0].objects[0];
+        (lines, o.origin.y + o.size.1, o.line)
+    };
+    let (plain, _, _) = compose(1.0, 0.0, true);
+    let pitch = plain[2] - plain[1];
+    // Hanging 12pt below the baseline: the next line's ascent (at the default 12pt) clears it.
+    let (lines, bottom, li) = compose(24.0, -12.0, true);
+    assert_eq!(li, 0);
+    let top = lines[1] - 12.0 * super::NEXT_LINE_ASCENT;
+    assert!(top >= bottom + super::INLINE_OBJECT_CLEARANCE - 1e-6, "next line top {top}, object bottom {bottom}");
+    assert!(lines[1] - lines[0] > pitch, "{lines:?}");
+    // Only that line moves: the rest keep the paragraph's pitch.
+    assert!((lines[2] - lines[1] - pitch).abs() < 1e-6, "{lines:?}");
+    // Raised instead (all of it above the baseline): the line grows, the next pitch is plain.
+    let (lines, _, _) = compose(24.0, 12.0, true);
+    assert!((lines[1] - lines[0] - pitch).abs() < 1e-6, "{lines:?}");
+    // Within the descender: no change at all.
+    assert_eq!(compose(4.0, -1.0, true).0, plain);
+    // Any other inline object hangs over the next line, as before.
+    let (lines, _, _) = compose(24.0, -12.0, false);
+    assert!((lines[1] - lines[0] - pitch).abs() < 1e-6, "{lines:?}");
+}
