@@ -335,7 +335,9 @@ impl Parser<'_> {
                         if self.depth >= MAX_NESTING {
                             return Some(Node::Group(Vec::new()));
                         }
-                        let depth = self.depth + 1;
+                        // Each open environment keeps its own copy of the rest of the input while
+                        // its cells are parsed, so a grid uses up a 16th of the nesting budget.
+                        let depth = self.depth + MAX_NESTING / 16;
                         let align = matches!(env.as_str(), "aligned" | "align" | "align*" | "split");
                         let rows = split_grid(&body)
                             .into_iter()
@@ -983,5 +985,15 @@ mod tests {
             let (svg, _) = to_svg(&latex, 12.0);
             assert!(!svg.is_empty());
         }
+        // Grids nest at most 16 deep, which bounds the copies of the input they hold.
+        fn grid_depth(n: &Node) -> usize {
+            match n {
+                Node::Grid { rows, .. } => 1 + rows.iter().flatten().map(grid_depth).max().unwrap_or(0),
+                Node::Group(v) => v.iter().map(grid_depth).max().unwrap_or(0),
+                _ => 0,
+            }
+        }
+        let d = grid_depth(&parse(&format!("{}x", r"\begin{cases}".repeat(100))));
+        assert!((2..=16).contains(&d), "{d}");
     }
 }
