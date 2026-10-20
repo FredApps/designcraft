@@ -3018,6 +3018,20 @@ fn key_matches(m: egui::Modifiers, k: egui::Key, key: egui::Key, modifiers: egui
     matches.then_some(k == key && m.shift == modifiers.shift)
 }
 
+/// The command a paste event stands for besides plain Paste. egui-winit turns every ⌘+V chord into
+/// `Event::Paste` with the clipboard's text and drops the key press, so the shortcut table never
+/// sees Paste in Place's chord; the modifiers held when it went down tell them apart. `None` when
+/// the chord is another one, or the native menu's accelerator takes it.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn paste_chord_command(app: &DesignApp, modifiers: egui::Modifiers) -> Option<&'static str> {
+    let id = "edit.pasteInPlace";
+    if app.native_menu && !app.ui.shortcuts.contains_key(id) {
+        return None;
+    }
+    let (m, k) = shortcut_of(app, id).as_deref().and_then(parse_shortcut)?;
+    (k == egui::Key::V && key_matches(m, k, egui::Key::V, modifiers) == Some(true)).then_some(id)
+}
+
 /// Global keyboard shortcuts: menu commands and single-key tool shortcuts.
 pub fn shortcuts(app: &mut DesignApp, ctx: &egui::Context) {
     // Only a focused text field takes the keys: the canvas (or a button) having focus after a click

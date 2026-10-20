@@ -1529,6 +1529,21 @@ fn field_focused_id(ctx: &egui::Context) -> egui::Id {
 pub fn begin_frame(ctx: &egui::Context) {
     let (id, focused) = (field_focused_id(ctx), ctx.text_edit_focused());
     ctx.data_mut(|d| d.insert_temp(id, focused));
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let now = ctx.input(|i| i.modifiers);
+        // The modifiers last frame ended with are the ones this frame's events began with.
+        ctx.data_mut(|d| {
+            let (_, end) = d.get_temp::<(egui::Modifiers, egui::Modifiers)>(modifiers_id()).unwrap_or((now, now));
+            d.insert_temp(modifiers_id(), (end, now));
+        });
+    }
+}
+
+/// (held when this frame's events began, held after them).
+#[cfg(not(target_arch = "wasm32"))]
+fn modifiers_id() -> egui::Id {
+    egui::Id::new("canvas-frame-modifiers")
 }
 
 /// Caret / text highlight inside a table cell (the cell's lines are offset by the cell origin).
@@ -2475,7 +2490,21 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
     // text must not delete the character before it).
     let composing_at_start = app.session.tool_composing();
     let evs = ui.input(|i| i.events.clone());
+    // Native only: egui-winit sends a ⌘+V chord as a paste without its key press, so the modifiers
+    // held at the paste tell Paste in Place from Paste. The web also gets the key press, and the
+    // shortcut table has already run the command. A chord's modifiers may be released in the same
+    // frame, hence the modifiers held at each event.
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut held =
+        ui.data(|d| d.get_temp::<(egui::Modifiers, egui::Modifiers)>(modifiers_id())).map_or_else(|| ui.input(|i| i.modifiers), |(start, _)| start);
     for e in evs {
+        #[cfg(not(target_arch = "wasm32"))]
+        let chord = {
+            if let egui::Event::ModifiersChanged(m) = &e {
+                held = *m;
+            }
+            if matches!(e, egui::Event::Paste(_)) { crate::menus::paste_chord_command(app, held) } else { None }
+        };
         let composing = composing_at_start || app.session.tool_composing();
         match e {
             egui::Event::Ime(ime) if wants_text => ime_event(app, ime, vi),
@@ -2496,6 +2525,15 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
                 // `run` puts the copied text on the system clipboard.
                 let id = if matches!(e, egui::Event::Cut) { "edit.cut" } else { "edit.copy" };
                 let _ = app.run(id, json!({}));
+            }
+            // Paste in Place's chord (⌘⌥⇧V unless rebound) arrives as a paste too.
+            #[cfg(not(target_arch = "wasm32"))]
+            egui::Event::Paste(_) if chord.is_some() => {
+                if let Some(id) = chord
+                    && crate::menus::enabled(app, id)
+                {
+                    crate::menus::activate(app, id, &serde_json::Value::Null);
+                }
             }
             // Without a native menu bar the copy and paste keys arrive only as these events.
             egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_) if !app.native_menu => {
@@ -3588,6 +3626,39 @@ mod tests {
         // Centred where text from another app would go: the middle of the view.
         let (_, centre) = view_centre(app).unwrap();
         assert!((it.bounds().center() - centre).hypot() < 0.01, "{:?} vs {centre:?}", it.bounds());
+    }
+
+    #[test]
+    fn the_paste_in_place_shortcut_pastes_in_place_and_plain_paste_offsets() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let id = app.run("frame.create", json!({"rect": [100, 100, 200, 200]})).unwrap()["id"].as_u64().unwrap();
+        let original = app.session.doc().unwrap().doc.item(designcraft_doc::ItemId(id)).unwrap().bounds();
+        app.run("edit.copy", json!({})).unwrap();
+        let clip = app.object_clip_text.clone().expect("the copy's placeholder text");
+        let mut h = harness(app);
+        let paste = |h: &mut Harness<'static, DesignApp>, modifiers: egui::Modifiers| {
+            // As egui-winit delivers ⌃⌥⇧V: the chord's paste and the V release, no V press; here the
+            // modifiers are released within the same frame.
+            let release = egui::Event::Key { key: egui::Key::V, physical_key: None, pressed: false, repeat: false, modifiers };
+            let none = egui::Event::ModifiersChanged(egui::Modifiers::NONE);
+            h.input_mut().events.extend([egui::Event::ModifiersChanged(modifiers), egui::Event::Paste(clip.clone()), release, none]);
+            h.run_steps(2);
+            let st = h.state().session.doc().unwrap();
+            let pasted = *st.selection.items.first().expect("the copy is selected");
+            assert_ne!(pasted.0, id);
+            st.doc.item(pasted).unwrap().bounds()
+        };
+        let linux = egui::Modifiers { alt: true, ctrl: true, shift: true, mac_cmd: false, command: true };
+        assert_eq!(paste(&mut h, linux), original, "Paste in Place");
+        let moved = paste(&mut h, egui::Modifiers::COMMAND);
+        assert!((moved.x0 - original.x0 - 12.0).abs() < 1e-9 && (moved.y0 - original.y0 - 12.0).abs() < 1e-9, "{moved:?}");
+        // The modifiers went down in an earlier frame than the paste.
+        h.event_modifiers(egui::Event::Paste(clip.clone()), linux);
+        h.run_steps(2);
+        let st = h.state().session.doc().unwrap();
+        let pasted = *st.selection.items.first().expect("the copy is selected");
+        assert_eq!(st.doc.item(pasted).unwrap().bounds(), original);
     }
 
     #[test]
