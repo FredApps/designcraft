@@ -492,7 +492,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ),
     ("ICF Top", ["ICF oben", "Haut ICF", "Parte superior ICF", "平均字面の上", "平均字面上"]),
     ("ICF Bottom", ["ICF unten", "Bas ICF", "Parte inferior ICF", "平均字面の下", "平均字面下"]),
-    ("Gyoudori:", ["Gyoudori:", "Gyoudori:", "Gyoudori:", "行取り:", "行取："]),
+    ("Gyoudori:", ["Gyoudori:", "Gyoudori :", "Gyoudori:", "行取り:", "行取："]),
     (
         "Use Paragraph Gyoudori",
         ["Absatz-Gyoudori verwenden", "Utiliser le gyoudori de paragraphe", "Usar gyoudori de párrafo", "段落行取りを使用", "使用段落行取"],
@@ -729,7 +729,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Editorial", ["Redaktion", "Éditorial", "Editorial", "エディトリアル", "编辑"]),
     ("Object & Layout", ["Objekt und Layout", "Objet et mise en page", "Objeto y diseño", "オブジェクト＆レイアウト", "对象和版面"]),
     ("Styles", ["Formate", "Styles", "Estilos", "スタイル", "样式"]),
-    ("Essentials Classic", ["Essentials Classic", "Essentials Classic", "Essentials Classic", "Essentials Classic", "基本功能（经典）"]),
+    ("Essentials Classic", ["Essentials Classic", "Les indispensables (classique)", "Essentials Classic", "Essentials Classic", "基本功能（经典）"]),
     ("Split Window", ["Fenster teilen", "Fractionner la fenêtre", "Dividir ventana", "ウィンドウを分割", "拆分窗口"]),
     ("New Window", ["Neues Fenster", "Nouvelle fenêtre", "Nueva ventana", "新規ウィンドウ", "新建窗口"]),
     (
@@ -1383,12 +1383,12 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Apply None (/)", ["Apply None (/)", "Appliquer Aucun (/)", "Apply None (/)", "Apply None (/)", "应用无 (/)"]),
     (
         "Default Fill and Stroke",
-        ["Default Fill and Stroke", "Default Fill and Stroke", "Default Fill and Stroke", "Default Fill and Stroke", "默认填色和描边"],
+        ["Default Fill and Stroke", "Fond et contour par défaut", "Default Fill and Stroke", "Default Fill and Stroke", "默认填色和描边"],
     ),
-    ("Swap Fill and Stroke", ["Swap Fill and Stroke", "Swap Fill and Stroke", "Swap Fill and Stroke", "Swap Fill and Stroke", "交换填色和描边"]),
+    ("Swap Fill and Stroke", ["Swap Fill and Stroke", "Permuter fond et contour", "Swap Fill and Stroke", "Swap Fill and Stroke", "交换填色和描边"]),
     (
         "Toggle Fill and Stroke",
-        ["Toggle Fill and Stroke", "Toggle Fill and Stroke", "Toggle Fill and Stroke", "Toggle Fill and Stroke", "切换填色和描边"],
+        ["Toggle Fill and Stroke", "Basculer fond/contour", "Toggle Fill and Stroke", "Toggle Fill and Stroke", "切换填色和描边"],
     ),
     ("Reverse the gradient", ["Reverse the gradient", "Inverser le dégradé", "Reverse the gradient", "Reverse the gradient", "反转渐变"]),
     ("Style source", ["Style source", "Source du style", "Style source", "Style source", "样式源"]),
@@ -2056,7 +2056,13 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ),
     (
         "Show/Hide Document Grid",
-        ["Show/Hide Document Grid", "Show/Hide Document Grid", "Show/Hide Document Grid", "Show/Hide Document Grid", "显示/隐藏文档网格"],
+        [
+            "Show/Hide Document Grid",
+            "Afficher/Masquer la grille du document",
+            "Show/Hide Document Grid",
+            "Show/Hide Document Grid",
+            "显示/隐藏文档网格",
+        ],
     ),
     (
         "Show/Hide Frame Edges",
@@ -2708,7 +2714,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
         "Select an object or text to color its fill or stroke.",
         [
             "Select an object or text to color its fill or stroke.",
-            "Select an object or text to color its fill or stroke.",
+            "Sélectionnez un objet ou du texte pour colorer son fond ou son contour.",
             "Select an object or text to color its fill or stroke.",
             "Select an object or text to color its fill or stroke.",
             "选择一个对象或文本以设置其填色或描边颜色。",
@@ -2917,7 +2923,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Cap Height", ["Cap Height", "Hauteur de capitale", "Cap Height", "Cap Height", "大写字母高度"]),
     ("Leading", ["Leading", "Interligne", "Leading", "Leading", "行距"]),
     ("x Height", ["x Height", "Hauteur d'x", "x Height", "x Height", "x 字高"]),
-    ("Em Box Height", ["Em Box Height", "Em Box Height", "Em Box Height", "Em Box Height", "全角字框高度"]),
+    ("Em Box Height", ["Em Box Height", "Hauteur du cadratin", "Em Box Height", "Em Box Height", "全角字框高度"]),
     ("Fixed", ["Fixed", "Fixe", "Fixed", "Fixed", "固定"]),
     ("Never (continuous)", ["Never (continuous)", "Jamais (continu)", "Never (continuous)", "Never (continuous)", "从不（连续编号）"]),
     ("Page", ["Page", "Page", "Page", "Page", "页面"]),
@@ -3496,8 +3502,8 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Ukrainian", ["Ukrainian", "Ukrainien", "Ukrainian", "Ukrainian", "乌克兰语"]),
     ("Cell Style", ["Cell Style", "Style de cellule", "Cell Style", "Cell Style", "单元格样式"]),
     ("Table Style", ["Table Style", "Style de tableau", "Table Style", "Table Style", "表样式"]),
-    ("Col ←", ["Col ←", "Col ←", "Col ←", "Col ←", "左侧插入列"]),
-    ("Col →", ["Col →", "Col →", "Col →", "Col →", "右侧插入列"]),
+    ("Col ←", ["Col ←", "Col. ←", "Col ←", "Col ←", "左侧插入列"]),
+    ("Col →", ["Col →", "Col. →", "Col →", "Col →", "右侧插入列"]),
     ("Row ↑", ["Row ↑", "Ligne ↑", "Row ↑", "Row ↑", "上方插入行"]),
     ("Row ↓", ["Row ↓", "Ligne ↓", "Row ↓", "Row ↓", "下方插入行"]),
     ("Hide Others", ["Hide Others", "Masquer les autres", "Hide Others", "Hide Others", "隐藏其他图层"]),
@@ -4221,7 +4227,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
         ["Aufzählungszeichen und Nummerierung…", "Puces et numérotation…", "Viñetas y numeración…", "箇条書き記号と番号付け…", "项目符号和编号…"],
     ),
     ("List:", ["Liste:", "Liste:", "Lista:", "リスト:", "列表："]),
-    ("Mode:", ["Modus:", "Mode:", "Modo:", "モード:", "模式："]),
+    ("Mode:", ["Modus:", "Mode :", "Modo:", "モード:", "模式："]),
     (
         "Continue from Previous Number",
         [
@@ -4708,7 +4714,7 @@ mod tests {
         // `fr::TABLE` is looked up first: a key there would hide the shared table's French column.
         let both: Vec<_> = catalog.keys().filter(|k| shared.contains(*k)).collect();
         assert!(both.is_empty(), "French keys also in the shared table: {both:?}");
-        let mut keys = std::collections::HashSet::new();
+        let mut keys = interface_strings();
         for table in [ar::TABLE, de::TABLE, it::TABLE, ja::TABLE, pt_br::TABLE, uk::TABLE, ru::TABLE, cs::TABLE] {
             keys.extend(table.iter().map(|(key, _)| *key));
         }
@@ -4727,6 +4733,122 @@ mod tests {
             assert_eq!(placeholders(key), placeholders(translation), "placeholders: {key}");
         }
         assert_eq!(tr("fr", "Group"), "Associer");
+    }
+
+    /// Interface strings that read the same in French: names, abbreviations, numbering samples, key
+    /// symbols and words French shares with English.
+    const SAME_IN_FRENCH: &[&str] = &[
+        "  OK  ",
+        " (auto)",
+        "+Bin",
+        "+LOC",
+        "A, B, C, D...",
+        "Angle",
+        "Articles",
+        "Bunri-Kinshi",
+        "Commits",
+        "Composition",
+        "Compression",
+        "Conditions",
+        "Cyan",
+        "DesignCraft",
+        "Direction",
+        "Distance",
+        "Document",
+        "Document…",
+        "Ellipse",
+        "Extras",
+        "Fractions",
+        "GREP",
+        "Hindi",
+        "Horizontal",
+        "I, II, III, IV...",
+        "Image",
+        "Index",
+        "Interface",
+        "Justification",
+        "Justification…",
+        "Kanji",
+        "Kenten",
+        "Lab",
+        "Ligatures",
+        "Magenta",
+        "Maximum",
+        "Menus",
+        "Menus…",
+        "Minimum",
+        "Mobile",
+        "Normal",
+        "Normal (W)",
+        "Notes",
+        "OK",
+        "OpenType",
+        "Options",
+        "Orange",
+        "Orientation",
+        "PDF/A-2b",
+        "PDF/X-4",
+        "Page",
+        "Pages",
+        "Parents",
+        "Pathfinder",
+        "Picas",
+        "Portrait",
+        "Position",
+        "Radial",
+        "Rectangle",
+        "Rensuuji",
+        "Rotation",
+        "Ruby",
+        "Ruby…",
+        "Satin",
+        "Saturation",
+        "Script",
+        "Scripts",
+        "Section",
+        "Serif",
+        "Shatai",
+        "Signature",
+        "Simple",
+        "Structure",
+        "Style",
+        "Styles",
+        "Tate-Chu-Yoko",
+        "Triangle",
+        "Version",
+        "Vertical",
+        "Violet",
+        "Warichu",
+        "Web",
+        "a, b, c, d...",
+        "document",
+        "i, ii, iii, iv...",
+        "pages",
+        "ΔLOC",
+        "⇧",
+        "−Bin",
+        "−LOC",
+        "⌃",
+        "⌘",
+        "⌥",
+    ];
+
+    #[test]
+    fn french_translates_every_interface_string() {
+        let keys = interface_strings();
+        // A new English string needs a French entry (or a place on `SAME_IN_FRENCH`) before it ships.
+        let mut untranslated: Vec<_> = keys.iter().filter(|key| tr("fr", key) == **key && !SAME_IN_FRENCH.contains(key)).collect();
+        untranslated.sort();
+        assert!(untranslated.is_empty(), "French falls back to English for: {untranslated:?}");
+        for key in SAME_IN_FRENCH {
+            assert!(keys.contains(key), "SAME_IN_FRENCH lists a string the interface no longer has: {key}");
+            assert_eq!(tr("fr", key), *key, "SAME_IN_FRENCH lists a string French translates: {key}");
+        }
+        for tool in designcraft_tools::TOOL_GROUPS.iter().flat_map(|group| group.iter()) {
+            assert!(tr("fr", tool.label).starts_with("Outil "), "{}", tool.id);
+        }
+        assert_eq!(tr("fr", "Selection Tool"), "Outil Sélection");
+        assert_eq!(tr("fr", "Don't Save"), "Ne pas enregistrer");
     }
 
     #[test]
@@ -4928,10 +5050,9 @@ mod tests {
         assert_eq!(tr("pl", "{pages} Pages in {spreads} Spreads"), "Strony: {pages}, rozkładówki: {spreads}");
     }
 
-    #[test]
-    fn czech_catalog_has_no_stale_keys_and_keeps_placeholders_and_markers() {
-        let catalog: HashMap<_, _> = cs::TABLE.iter().copied().collect();
-        assert_eq!(catalog.len(), cs::TABLE.len(), "duplicate Czech keys");
+    /// Every English string the interface passes to `tr`, as far as the catalogs, command and tool
+    /// tables and the list of UI-only labels know them.
+    fn interface_strings() -> std::collections::HashSet<&'static str> {
         let mut keys = std::collections::HashSet::new();
         keys.extend(TABLE.iter().map(|(key, _)| *key));
         for table in [ar::TABLE, it::TABLE, ja::TABLE, pt_br::TABLE, uk::TABLE] {
@@ -5024,6 +5145,14 @@ mod tests {
             "{name}: import cancelled while a dialog is open; choose the file again",
             "{name}: {count} step(s) done",
         ]);
+        keys
+    }
+
+    #[test]
+    fn czech_catalog_has_no_stale_keys_and_keeps_placeholders_and_markers() {
+        let catalog: HashMap<_, _> = cs::TABLE.iter().copied().collect();
+        assert_eq!(catalog.len(), cs::TABLE.len(), "duplicate Czech keys");
+        let keys = interface_strings();
         // A new English string falls back to English until it is translated, so only stale
         // entries (keys nothing passes to `tr` any more) fail.
         let stale: Vec<_> = catalog.keys().filter(|k| !keys.contains(*k)).collect();
