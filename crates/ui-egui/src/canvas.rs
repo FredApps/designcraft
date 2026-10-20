@@ -2645,31 +2645,45 @@ fn draw_hidden_characters(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc
             for l in &ft.lines {
                 let size = (l.ascent * 0.75 * xf.zoom).clamp(6.0, 40.0) as f32;
                 let font = egui::FontId::proportional(size);
-                for g in &l.glyphs {
-                    if g.len == 0 {
-                        continue;
-                    }
-                    let ch = story.text[g.byte.min(story.text.len())..].chars().next().unwrap_or(' ');
-                    let mark = match ch {
-                        ' ' => "·",
-                        '\t' => "»",
-                        '\u{2028}' => "¬",
-                        '\u{A0}' => "°",
-                        _ => continue,
-                    };
-                    let p = xf.to_screen(m * Point::new(g.x + if ch == ' ' { g.adv / 2.0 } else { 0.0 }, l.baseline));
-                    let align = if ch == ' ' { egui::Align2::CENTER_BOTTOM } else { egui::Align2::LEFT_BOTTOM };
+                for (x, mark, centered) in hidden_marks(&story.text, l) {
+                    let p = xf.to_screen(m * Point::new(x, l.baseline));
+                    let align = if centered { egui::Align2::CENTER_BOTTOM } else { egui::Align2::LEFT_BOTTOM };
                     painter.text(p, align, mark, font.clone(), col);
-                }
-                if l.last_in_para {
-                    let end = l.range.end;
-                    let mark = if end >= story.text.len() { "#" } else { "¶" };
-                    let p = xf.to_screen(m * Point::new(l.end_x + 1.0, l.baseline));
-                    painter.text(p, egui::Align2::LEFT_BOTTOM, mark, font.clone(), col);
                 }
             }
         }
     }
+}
+
+/// The hidden-character marks on line `l` of a story with text `text`: frame-space x, mark, and
+/// whether the mark is centered on x (spaces) or starts at it.
+fn hidden_marks(text: &str, l: &compose::Line) -> Vec<(f64, &'static str, bool)> {
+    let mut out = Vec::new();
+    for g in &l.glyphs {
+        if g.len == 0 {
+            continue;
+        }
+        let Some(ch) = text.get(g.byte..).and_then(|t| t.chars().next()) else { continue };
+        let mark = match ch {
+            ' ' => "·",
+            '\t' => "»",
+            '\u{2028}' => "¬",
+            '\u{A0}' => "°",
+            _ => continue,
+        };
+        if ch == ' ' {
+            out.push((g.x + g.adv / 2.0, mark, true));
+        } else {
+            out.push((g.x, mark, false));
+        }
+    }
+    if l.last_in_para {
+        // The spaces trimmed off the line's end sit past `end_x`; the paragraph mark follows them.
+        let end = l.glyphs.iter().filter(|g| g.len > 0 && !g.visible && g.x >= l.end_x - 1e-9).map(|g| g.x + g.adv).fold(l.end_x, f64::max);
+        let mark = if l.range.end >= text.len() { "#" } else { "¶" };
+        out.push((end + 1.0, mark, false));
+    }
+    out
 }
 
 /// View › Flattener Preview: red over every object that involves transparency (opacity, blend
@@ -4775,6 +4789,29 @@ mod tests {
             assert_eq!(text, "Hello", "{key:?} confirms the field and leaves the story alone");
             let size = crate::panels::text_attrs(h.state_mut()).unwrap()["chars"]["size"].clone();
             assert_eq!(size, 18.0, "{key:?} applies the typed size");
+        }
+    }
+
+    #[test]
+    fn trailing_spaces_show_dots_before_the_paragraph_mark() {
+        let text = "ab  \ncd  ";
+        let mut d = Document::new(&designcraft_doc::build::NewDocument::default());
+        let lid = d.default_layer();
+        let rect = DRect::new(0.0, 0.0, 300.0, 100.0);
+        let (_, sid) = d.add_text_frame(SpreadRef::Doc(0), rect, lid, text, Default::default()).unwrap();
+        let cs = compose::compose_story(&d, sid, &compose::ComposeOptions::default());
+        let lines: Vec<_> = cs.frames.iter().flat_map(|f| &f.lines).collect();
+        assert_eq!(lines.len(), 2);
+        for (l, end_mark) in lines.iter().zip(["¶", "#"]) {
+            let marks = hidden_marks(text, l);
+            let dots: Vec<f64> = marks.iter().filter(|m| m.1 == "·").map(|m| m.0).collect();
+            assert_eq!(dots.len(), 2, "a dot for each trailing space: {marks:?}");
+            let &(para_x, mark, _) = marks.last().unwrap();
+            assert_eq!(mark, end_mark);
+            // The dots sit past the last letter, and the mark comes after both spaces.
+            let space = l.glyphs.iter().rev().find(|g| g.len > 0).unwrap();
+            assert!(dots.iter().all(|&x| x > l.end_x && x < para_x), "{dots:?} then {mark} at {para_x}");
+            assert!(para_x >= space.x + space.adv, "{mark} at {para_x} overlaps the last space");
         }
     }
 }
