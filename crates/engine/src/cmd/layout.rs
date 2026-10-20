@@ -262,6 +262,10 @@ pub fn specs() -> Vec<CommandSpec> {
                 let base = parent_ref(ID, &s.doc()?.doc, p.get("basedOn"))?.flatten();
                 s.edit(|d, _| {
                     let prefix = prefix.unwrap_or_else(|| d.next_parent_prefix());
+                    let label = designcraft_doc::ParentInfo { prefix: prefix.clone(), name: name.clone(), based_on: None }.label();
+                    if parent_label_taken(d, &label, None) {
+                        return Err(bad(ID, format!("a parent named {label} exists")));
+                    }
                     let m = d.page(0).map(|p| (p.columns.count, p.columns.gutter, p.margins)).unwrap_or((1, 12.0, Margins::uniform(36.0)));
                     let id = d.add_parent(&prefix, &name, m.0, m.1, m.2);
                     if let Some(info) = d.parents.last_mut().map(std::sync::Arc::make_mut).and_then(|x| x.parent.as_mut()) {
@@ -886,6 +890,12 @@ fn parent_ref(cmd: &str, d: &designcraft_doc::Document, v: Option<&Value>) -> Re
     }
 }
 
+/// Whether a parent other than index `except` is labelled `label` (`A-Parent`). Parents may share
+/// a prefix, but a label names one parent.
+fn parent_label_taken(d: &designcraft_doc::Document, label: &str, except: Option<usize>) -> bool {
+    d.parents.iter().enumerate().any(|(i, x)| Some(i) != except && x.parent.as_ref().is_some_and(|o| o.label() == label))
+}
+
 /// A parent prefix parameter: trimmed, 1–4 characters, no `-` (it separates prefix and name).
 fn parent_prefix_param(cmd: &str, p: &Value) -> Result<Option<String>> {
     let Some(v) = p.get("prefix") else { return Ok(None) };
@@ -943,6 +953,9 @@ fn parent_options(s: &mut crate::Session, p: &Value) -> Result<Value> {
     });
     if new == info {
         return Ok(out);
+    }
+    if parent_label_taken(d, &new.label(), Some(pi)) {
+        return Err(bad(CMD, format!("a parent named {} exists", new.label())));
     }
     s.edit(|d, _| {
         let info = d.parents.get_mut(pi).map(std::sync::Arc::make_mut).and_then(|x| x.parent.as_mut()).ok_or_else(|| bad(CMD, "no such parent"))?;
@@ -2039,6 +2052,11 @@ mod parent_tests {
             assert!(s.execute("layout.parents.new", &bad).is_err(), "{bad}");
         }
         assert!(s.execute("layout.parents.options", &json!({"parent": "C", "basedOn": "C-Back"})).is_err());
+        // A label names one parent: taking another parent's label is refused, a prefix may be shared.
+        assert!(s.execute("layout.parents.options", &json!({"parent": "C-Back", "prefix": "Z", "name": "Cover"})).is_err());
+        assert!(s.execute("layout.parents.new", &json!({"prefix": "Z", "name": "Cover"})).is_err());
+        assert!(s.execute("layout.parents.options", &json!({"parent": "C-Back", "prefix": "Z"})).is_ok());
+        s.execute("edit.undo", &json!({})).unwrap();
         assert_eq!(s.doc().unwrap().history.undo.len(), undo);
         assert_eq!(info(&s, b).label(), "Z-Cover");
         // Four characters, including non-Latin ones, are fine.

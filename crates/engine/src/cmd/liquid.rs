@@ -587,8 +587,22 @@ mod tests {
         assert!(s.doc().unwrap().history.undo.is_empty());
         // A layout survives Numbering & Section Options › remove section.
         s.execute("layout.createAlternate", &json!({"name": "Wide", "width": 900, "height": 600})).unwrap();
-        s.execute("layout.section", &json!({"page": 1, "remove": true})).ok();
+        s.execute("layout.section", &json!({"page": 2, "remove": true})).unwrap();
         assert_eq!(s.doc().unwrap().doc.layouts().len(), 2);
+    }
+
+    #[test]
+    fn deleting_a_layouts_first_page_keeps_the_layout_when_a_section_follows() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 2, "facingPages": false})).unwrap();
+        s.execute("layout.createAlternate", &json!({"name": "Wide", "width": 900, "height": 600})).unwrap();
+        // The layout starts at page 3; a numbering section starts at page 4.
+        s.execute("layout.section", &json!({"page": 4, "startNumber": 7})).unwrap();
+        s.execute("layout.pages.delete", &json!({"pages": [2]})).unwrap();
+        let names: Vec<(String, usize, usize)> = layouts(&s);
+        assert_eq!(names, vec![("Layout 1".into(), 0, 2), ("Wide".into(), 2, 3)]);
+        // The kept section's numbering stays.
+        assert_eq!(s.doc().unwrap().doc.page_number(2), 7);
     }
 
     #[test]

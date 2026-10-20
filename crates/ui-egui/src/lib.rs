@@ -219,8 +219,10 @@ pub struct UiState {
     /// parts shared then (None: a few rows).
     pub pages_parents_height: Option<[f32; 2]>,
     /// The parent selected (clicked) in the Pages panel's parents list: what the panel menu's
-    /// Duplicate Parent Spread, Parent Options and Delete Parent act on.
-    pub pages_selected_parent: Option<designcraft_doc::SpreadId>,
+    /// Duplicate Parent Spread, Parent Options and Delete Parent act on, with the uid of the
+    /// document it belongs to (a selection never carries over to another document or session).
+    #[serde(skip)]
+    pub pages_selected_parent: Option<(u64, designcraft_doc::SpreadId)>,
     /// The Pages panel's Panel Options.
     pub pages_panel: panels::pages::PanelOptions,
     /// Edit › Color Settings (re-applied at start).

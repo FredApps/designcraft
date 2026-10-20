@@ -285,7 +285,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
         None
     };
     // Outside Edit Parents, the parent clicked in the list (the panel menu acts on it).
-    let selected_parent = app.ui.pages_selected_parent.filter(|id| !editing_parents && doc.parent_index(*id).is_some());
+    let selected_parent = selected_parent(app).filter(|id| !editing_parents && doc.parent_index(*id).is_some());
     let mut rows = vec![ParentRow::none(aspect)];
     rows.extend(doc.parents.iter().enumerate().map(|(i, p)| ParentRow::new(i, p, aspect)));
     // As in InDesign: parents and pages each scroll on their own (parents on top unless Panel
@@ -377,7 +377,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                     let resp = if opts.parents_vertical { resp } else { resp.on_hover_text(label) };
                     resp.dnd_set_drag_payload(PageDrag::Parent(row.parent.map(|(_, id)| id)));
                     if resp.clicked() {
-                        app.ui.pages_selected_parent = row.parent.map(|(_, id)| id);
+                        select_parent(app, row.parent.map(|(_, id)| id));
                     }
                     if resp.double_clicked()
                         && let Some((_, id)) = row.parent
@@ -420,7 +420,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                 if resp.clicked()
                     && let Ok(r) = app.run("layout.parents.new", json!({}))
                 {
-                    app.ui.pages_selected_parent = r.get("id").and_then(serde_json::Value::as_u64).map(SpreadId);
+                    select_parent(app, r.get("id").and_then(serde_json::Value::as_u64).map(SpreadId));
                 }
             },
         );
@@ -512,7 +512,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                         drop = Some(((*payload).clone(), abs));
                     }
                     if resp.clicked() || resp.double_clicked() {
-                        app.ui.pages_selected_parent = None;
+                        select_parent(app, None);
                         if editing_parents {
                             let _ = app.run("layout.parents.edit", json!({"on": false}));
                             // The canvas refits to the page's spread once it is centred.
@@ -522,7 +522,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                         }
                         crate::canvas::go_to_page(app, abs);
                     }
-                    resp.context_menu(|ui| page_menu(app, ui, &doc, abs, si));
+                    resp.context_menu(|ui| page_menu(app, ui, &doc, &layouts, abs, si));
                     // Page number under the page: white on a blue badge when selected. Pages too
                     // narrow for their numbers share one label under the spread (below).
                     if narrow {
@@ -560,7 +560,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                 // Alternate layouts side by side, as InDesign's: a column each, its name and size
                 // over it, and a column to add one more.
                 let scale = (th / doc.settings.page_height.max(1.0) as f32).min(1.8 * th / tallest as f32);
-                let cur_layout = doc.layout_of(cur);
+                let cur_layout = layout_index(&layouts, cur);
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
                     for (k, l) in layouts.iter().enumerate() {
@@ -570,7 +570,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                         let col_w = (widest * scale + 24.0).max(LAYOUT_COL_MIN);
                         ui.vertical(|ui| {
                             ui.set_width(col_w);
-                            layout_header(app, ui, &doc, k, l, k == cur_layout, layouts.len(), &t);
+                            layout_header(app, ui, &doc, &layouts, k, k == cur_layout, &t);
                             draw_spreads(app, ui, spreads);
                         });
                     }
@@ -582,7 +582,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
                     let label = crate::i18n::tr(&app.ui.language, "Create Alternate Layout…");
                     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
                     if resp.on_hover_text(label).clicked() {
-                        open_create_alternate(app, &doc, cur_layout);
+                        open_create_alternate(app, &doc, &layouts, cur_layout);
                     }
                 });
             } else {
@@ -694,7 +694,8 @@ pub fn panel_menu(app: &mut DesignApp, ui: &mut egui::Ui) {
     let doc = st.doc.clone();
     let cur = crate::canvas::current_page(app).unwrap_or(0);
     let Some((si, _)) = doc.page_loc(cur) else { return };
-    page_menu(app, ui, &doc, cur, si);
+    let layouts = doc.layouts();
+    page_menu(app, ui, &doc, &layouts, cur, si);
 }
 
 /// Right-click on the panel's empty part, as InDesign's: the commands that need no page.
@@ -744,17 +745,16 @@ fn layout_size(doc: &designcraft_doc::Document, l: &designcraft_doc::LayoutRange
 
 /// An alternate layout column's header: its name and page size, and a menu (▾, or a right-click)
 /// to create, duplicate, change or delete layouts. Double-click: Alternate Layout Options.
-#[allow(clippy::too_many_arguments)]
 fn layout_header(
     app: &mut DesignApp,
     ui: &mut egui::Ui,
     doc: &designcraft_doc::Document,
+    layouts: &[designcraft_doc::LayoutRange],
     k: usize,
-    l: &designcraft_doc::LayoutRange,
     current: bool,
-    count: usize,
     t: &Tokens,
 ) {
+    let Some(l) = layouts.get(k) else { return };
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), LAYOUT_HEADER_H), Sense::click());
     ui.painter().rect_filled(r.shrink2(vec2(0.0, 2.0)), 2.0, if current { t.row_selected } else { t.panel_darker });
     let (w, h) = layout_size(doc, l);
@@ -779,15 +779,18 @@ fn layout_header(
     let label = crate::i18n::tr(&app.ui.language, "Layout Options");
     menu.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{label}: {}", l.name)));
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, current, l.name.clone()));
-    egui::Popup::menu(&menu).show(|ui| layout_menu(app, ui, doc, k, count));
+    egui::Popup::menu(&menu).show(|ui| layout_menu(app, ui, doc, layouts, k));
     if resp.double_clicked() {
-        open_layout_options(app, doc, k);
-    } else if resp.clicked()
-        && let Some(first) = doc.layouts().get(k).map(|l| l.start)
-    {
-        crate::canvas::go_to_page(app, first);
+        open_layout_options(app, doc, layouts, k);
+    } else if resp.clicked() {
+        crate::canvas::go_to_page(app, l.start);
     }
-    resp.context_menu(|ui| layout_menu(app, ui, doc, k, count));
+    resp.context_menu(|ui| layout_menu(app, ui, doc, layouts, k));
+}
+
+/// The layout (index into `layouts`) holding absolute page `abs`.
+pub(crate) fn layout_index(layouts: &[designcraft_doc::LayoutRange], abs: usize) -> usize {
+    layouts.iter().rposition(|l| l.start <= abs).unwrap_or(0)
 }
 
 /// At most `n` characters of `s`, with an ellipsis when cut.
@@ -796,13 +799,14 @@ fn truncate(s: &str, n: usize) -> String {
 }
 
 /// The commands on layout `k`: in its column header's menu and in the panel menu.
-fn layout_menu(app: &mut DesignApp, ui: &mut egui::Ui, doc: &designcraft_doc::Document, k: usize, count: usize) {
+fn layout_menu(app: &mut DesignApp, ui: &mut egui::Ui, doc: &designcraft_doc::Document, layouts: &[designcraft_doc::LayoutRange], k: usize) {
+    let count = layouts.len();
     let lang = app.ui.language.clone();
     let item = |ui: &mut egui::Ui, label: &str, on: bool| {
         ui.add_enabled(on, egui::Button::new(crate::rtl::widget(ui, crate::i18n::tr(&lang, label)))).clicked()
     };
     if item(ui, "Create Alternate Layout…", true) {
-        open_create_alternate(app, doc, k);
+        open_create_alternate(app, doc, layouts, k);
         ui.close();
     }
     if item(ui, "Duplicate Alternate Layout", true) {
@@ -810,7 +814,7 @@ fn layout_menu(app: &mut DesignApp, ui: &mut egui::Ui, doc: &designcraft_doc::Do
         ui.close();
     }
     if item(ui, "Alternate Layout Options…", true) {
-        open_layout_options(app, doc, k);
+        open_layout_options(app, doc, layouts, k);
         ui.close();
     }
     if item(ui, "Delete Alternate Layout", count > 1) {
@@ -822,8 +826,7 @@ fn layout_menu(app: &mut DesignApp, ui: &mut egui::Ui, doc: &designcraft_doc::Do
 }
 
 /// Create Alternate Layout…, from layout `k`, at its pages' other orientation.
-pub(crate) fn open_create_alternate(app: &mut DesignApp, doc: &designcraft_doc::Document, k: usize) {
-    let layouts = doc.layouts();
+pub(crate) fn open_create_alternate(app: &mut DesignApp, doc: &designcraft_doc::Document, layouts: &[designcraft_doc::LayoutRange], k: usize) {
     let Some(l) = layouts.get(k) else { return };
     let (w, h) = layout_size(doc, l);
     let (nw, nh) = (h, w);
@@ -832,8 +835,7 @@ pub(crate) fn open_create_alternate(app: &mut DesignApp, doc: &designcraft_doc::
 }
 
 /// Alternate Layout Options… for layout `k`: its name and page size.
-fn open_layout_options(app: &mut DesignApp, doc: &designcraft_doc::Document, k: usize) {
-    let layouts = doc.layouts();
+pub(crate) fn open_layout_options(app: &mut DesignApp, doc: &designcraft_doc::Document, layouts: &[designcraft_doc::LayoutRange], k: usize) {
     let Some(l) = layouts.get(k) else { return };
     let (w, h) = layout_size(doc, l);
     app.ui.dialog =
@@ -857,10 +859,21 @@ pub(crate) fn open_parent_options(app: &mut DesignApp, doc: &designcraft_doc::Do
     ));
 }
 
+/// The parent selected in the parents list, when it belongs to the active document.
+pub(crate) fn selected_parent(app: &DesignApp) -> Option<SpreadId> {
+    let uid = app.session.active()?.uid;
+    app.ui.pages_selected_parent.filter(|(u, _)| *u == uid).map(|(_, id)| id)
+}
+
+/// Select parent `id` (None: none) of the active document in the parents list.
+pub(crate) fn select_parent(app: &mut DesignApp, id: Option<SpreadId>) {
+    app.ui.pages_selected_parent = id.zip(app.session.active().map(|st| st.uid)).map(|(id, uid)| (uid, id));
+}
+
 /// The parent the panel menu's parent commands act on: the one selected in the list, or the one
 /// the canvas shows while parents are edited.
-fn target_parent(app: &DesignApp, doc: &designcraft_doc::Document) -> Option<SpreadId> {
-    if let Some(id) = app.ui.pages_selected_parent.filter(|id| doc.parent_index(*id).is_some()) {
+pub(crate) fn target_parent(app: &DesignApp, doc: &designcraft_doc::Document) -> Option<SpreadId> {
+    if let Some(id) = selected_parent(app).filter(|id| doc.parent_index(*id).is_some()) {
         return Some(id);
     }
     if !app.session.active().is_some_and(|st| st.editing_parents) {
@@ -897,15 +910,15 @@ impl ParentAction {
         match self {
             ParentAction::Duplicate => {
                 if let Ok(r) = app.run("layout.parents.duplicate", json!({"parent": id.0})) {
-                    app.ui.pages_selected_parent = r.get("id").and_then(serde_json::Value::as_u64).map(SpreadId);
+                    select_parent(app, r.get("id").and_then(serde_json::Value::as_u64).map(SpreadId));
                 }
             }
             ParentAction::Options => open_parent_options(app, doc, id),
             ParentAction::Delete => {
                 if app.run("layout.parents.delete", json!({"id": id.0})).is_ok() {
                     app.views.clear();
-                    if app.ui.pages_selected_parent == Some(id) {
-                        app.ui.pages_selected_parent = None;
+                    if selected_parent(app) == Some(id) {
+                        select_parent(app, None);
                     }
                 }
             }
@@ -952,7 +965,14 @@ fn parent_menu(app: &mut DesignApp, ui: &mut egui::Ui, doc: &designcraft_doc::Do
     }
 }
 
-fn page_menu(app: &mut DesignApp, ui: &mut egui::Ui, doc: &designcraft_doc::Document, abs: usize, si: usize) {
+fn page_menu(
+    app: &mut DesignApp,
+    ui: &mut egui::Ui,
+    doc: &designcraft_doc::Document,
+    layouts: &[designcraft_doc::LayoutRange],
+    abs: usize,
+    si: usize,
+) {
     let lang = app.ui.language.clone();
     let tr = |s: &str| crate::i18n::tr(&lang, s).to_owned();
     let pages_in_spread = doc.spreads.get(si).map_or(1, |sp| sp.pages.len());
@@ -1012,8 +1032,7 @@ fn page_menu(app: &mut DesignApp, ui: &mut egui::Ui, doc: &designcraft_doc::Docu
         }
     });
     ui.separator();
-    let layouts = doc.layouts().len();
-    layout_menu(app, ui, doc, doc.layout_of(abs), layouts);
+    layout_menu(app, ui, doc, layouts, layout_index(layouts, abs));
     if item(ui, "Numbering & Section Options…") {
         crate::menus::activate(app, "layout.section", &serde_json::Value::Null);
         ui.close();
@@ -1168,7 +1187,8 @@ mod tests {
                     return;
                 }
                 let doc = app.session.doc().unwrap().doc.clone();
-                page_menu(app, ui, &doc, abs, si);
+                let layouts = doc.layouts();
+                page_menu(app, ui, &doc, &layouts, abs, si);
             },
             app,
         );
@@ -1392,7 +1412,7 @@ mod tests {
         let doc = h.state().session.doc().unwrap().doc.clone();
         let b = doc.parents.iter().find(|p| p.parent.as_ref().is_some_and(|i| i.label() == "B-Parent")).map(|p| p.id);
         assert!(b.is_some());
-        assert_eq!(h.state().ui.pages_selected_parent, b);
+        assert_eq!(selected_parent(h.state()), b);
         // Its menu duplicates it as C-Parent.
         h.get_by_label("B-Parent").click_secondary();
         h.run_steps(3);
@@ -1426,7 +1446,8 @@ mod tests {
         assert!(h.query_by_label("Parent Options").is_some(), "no parent selected: a submenu of the parents");
         let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"pages": 2, "facingPages": false})).unwrap();
-        app.ui.pages_selected_parent = Some(app.session.doc().unwrap().doc.parents[0].id);
+        let first = app.session.doc().unwrap().doc.parents[0].id;
+        select_parent(&mut app, Some(first));
         let mut h = menu_harness(app, 0, 0);
         assert!(h.query_by_label("Delete Parent “A-Parent”").is_some());
         h.get_by_label("Duplicate Parent Spread “A-Parent”").click();
@@ -1470,6 +1491,25 @@ mod tests {
         h.run_steps(3);
         let names: Vec<String> = h.state().session.doc().unwrap().doc.layouts().into_iter().map(|l| l.name).collect();
         assert_eq!(names, ["Layout 1", "Tablet H copy"]);
+    }
+
+    #[test]
+    fn layout_menu_options_open_the_pages_panel_dialogs() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"pages": 2, "facingPages": false})).unwrap();
+        app.run("layout.parents.new", json!({"prefix": "B"})).unwrap();
+        app.run("app.parentOptions", json!({})).unwrap();
+        assert!(app.ui.dialog.as_ref().is_some_and(|d| d.id == "parentOptions" && d.s("prefix") == "A"), "no selection: the first parent");
+        let b = app.session.doc().unwrap().doc.parents[1].id;
+        select_parent(&mut app, Some(b));
+        app.run("app.parentOptions", json!({})).unwrap();
+        assert!(app.ui.dialog.as_ref().is_some_and(|d| d.s("prefix") == "B"));
+        app.run("layout.createAlternate", json!({"name": "Wide", "width": 900, "height": 600})).unwrap();
+        app.run("app.alternateLayoutOptions", json!({})).unwrap();
+        assert!(app.ui.dialog.as_ref().is_some_and(|d| d.id == "cmd:layout.alternate.options" && d.s("layout") == "Layout 1"));
+        // A selection belongs to its document.
+        app.run("file.new", json!({"pages": 1})).unwrap();
+        assert_eq!(selected_parent(&app), None);
     }
 
     #[test]

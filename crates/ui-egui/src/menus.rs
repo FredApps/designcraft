@@ -120,6 +120,13 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.deleteAllGuides", "Delete All Guides on Spread", None, "{} — the spread in view"),
     ("app.deletePage", "Delete Page", None, "{} — deletes the page in view"),
     ("app.duplicateSpread", "Duplicate Spread", None, "{} — duplicates the spread in view (pages and items)"),
+    (
+        "app.parentOptions",
+        "Parent Options…",
+        None,
+        "{} — the Parent Options dialog for the parent selected in the Pages panel (or shown), else the first",
+    ),
+    ("app.alternateLayoutOptions", "Alternate Layout Options…", None, "{} — the Alternate Layout Options dialog for the layout of the page in view"),
     ("app.tablePanel", "Table Panel", Some("Shift+F9"), "{}"),
     ("app.tabsPanel", "Tabs", Some("Cmd+Shift+T"), "{} — show or hide the Tabs panel (it opens above the selected text frame)"),
     ("app.characterPanel", "Character", Some("Cmd+T"), "{} — the Character panel"),
@@ -407,12 +414,12 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "-",
             "cmd:layout.pages.applyParent",
             "cmd:layout.parents.new",
-            "cmd:layout.parents.options",
+            "ui:app.parentOptions",
             "<",
             "cmd:layout.marginsAndColumns",
             "cmd:layout.createGuides",
             "cmd:layout.createAlternate",
-            "cmd:layout.alternate.options",
+            "ui:app.alternateLayoutOptions",
             "-",
             "ui:view.firstPage",
             "ui:view.previousPage",
@@ -1344,6 +1351,20 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
                 app.run("layout.pages.duplicateSpread", json!({"spread": spread}))
             };
             return Some(r);
+        }
+        "app.parentOptions" | "app.alternateLayoutOptions" => {
+            let Some(st) = app.session.active() else { return Some(Err("no document open".into())) };
+            let doc = st.doc.clone();
+            if id == "app.parentOptions" {
+                let target = crate::panels::pages::target_parent(app, &doc).or_else(|| doc.parents.first().map(|p| p.id));
+                let Some(target) = target else { return Some(Err("the document has no parents".into())) };
+                crate::panels::pages::open_parent_options(app, &doc, target);
+            } else {
+                let layouts = doc.layouts();
+                let k = crate::panels::pages::layout_index(&layouts, crate::canvas::current_page(app).unwrap_or(0));
+                crate::panels::pages::open_layout_options(app, &doc, &layouts, k);
+            }
+            return Some(Ok(Value::Null));
         }
         "app.tablePanel" => {
             app.ui.open_panel = if app.ui.open_panel.as_deref() == Some("table") { None } else { Some("table".into()) };

@@ -607,7 +607,12 @@ impl Document {
         let mut kept: Vec<Section> = Vec::with_capacity(sections.len());
         for sec in sections.into_iter().filter(|s| s.start < left) {
             if let Some(last) = kept.last_mut().filter(|l| l.start == sec.start) {
+                // A layout's name outlives its first page: it moves onto the section kept.
+                let layout = last.layout.take();
                 *last = sec;
+                if last.layout.is_none() {
+                    last.layout = layout;
+                }
             } else {
                 kept.push(sec);
             }
