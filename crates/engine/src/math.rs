@@ -523,11 +523,12 @@ fn split_grid(body: &str) -> Vec<Vec<String>> {
         if c == '{' && prev != Some('\\') {
             depth += 1;
         } else if c == '}' && prev != Some('\\') {
-            depth -= 1;
+            // A stray closer is ignored, as `env_body` ignores it, so later cells still split.
+            depth = (depth - 1).max(0);
         } else if starts(i, &begin) {
             env += 1;
         } else if starts(i, &end) {
-            env -= 1;
+            env = (env - 1).max(0);
         }
         cell.push(c);
         // `\\` is spent: a backslash after it does not escape the next character.
@@ -878,6 +879,13 @@ pub fn to_svg(latex: &str, size: f64) -> (Vec<u8>, (f64, f64)) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_grid_ignores_stray_closers() {
+        let cells = |body: &str| split_grid(body).iter().map(Vec::len).collect::<Vec<_>>();
+        assert_eq!(cells(r"a \end{foo} & b"), vec![2]);
+        assert_eq!(cells(r"a } & b \\ c & d"), vec![2, 2]);
+    }
 
     #[test]
     fn parses_the_common_constructs() {
