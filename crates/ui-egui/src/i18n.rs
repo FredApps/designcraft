@@ -139,7 +139,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Pages on Top", ["Seiten oben", "Pages en haut", "Páginas en la parte superior", "ページを上に表示", "页面在上"]),
     (
         "Parents on Top",
-        ["Übergeordnete Seiten oben", "Parents en haut", "Páginas principales en la parte superior", "親ページを上に表示", "父页面在上"],
+        ["Übergeordnete Seiten oben", "Gabarits en haut", "Páginas principales en la parte superior", "親ページを上に表示", "父页面在上"],
     ),
     ("Resize:", ["Größe ändern:", "Redimensionner :", "Cambiar tamaño:", "サイズ変更:", "调整大小："]),
     ("Extra Small", ["Sehr klein", "Très petite", "Extra pequeño", "極小", "特小"]),
@@ -150,8 +150,8 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Jumbo", ["Riesig", "Géante", "Gigante", "最大", "巨大"]),
     ("Proportional", ["Proportional", "Proportionnel", "Proporcional", "比例", "按比例"]),
     ("Pages Fixed", ["Seiten fixiert", "Pages fixes", "Páginas fijas", "ページを固定", "页面固定"]),
-    ("Parents Fixed", ["Übergeordnete fixiert", "Parents fixes", "Páginas principales fijas", "親ページを固定", "父页面固定"]),
-    ("Parents", ["Übergeordnete Seiten", "Parents", "Páginas principales", "親ページ", "父页面"]),
+    ("Parents Fixed", ["Übergeordnete fixiert", "Gabarits fixes", "Páginas principales fijas", "親ページを固定", "父页面固定"]),
+    ("Parents", ["Übergeordnete Seiten", "Gabarits", "Páginas principales", "親ページ", "父页面"]),
     (
         "Bulleted & Numbered Lists",
         [
@@ -868,7 +868,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
         ],
     ),
     ("Delete Spread", ["Druckbogen löschen", "Supprimer la planche", "Eliminar pliego", "スプレッドを削除", "删除跨页"]),
-    ("Parent Pages", ["Übergeordnete Seiten", "Pages parents", "Páginas principales", "親ページ", "父页面"]),
+    ("Parent Pages", ["Übergeordnete Seiten", "Gabarits", "Páginas principales", "親ページ", "父页面"]),
     (
         "Apply Parent to Pages",
         [
@@ -3533,7 +3533,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
         "Show Parent Page Overlay",
         [
             "Überlagerung der übergeordneten Seite anzeigen",
-            "Afficher la superposition de la page parent",
+            "Afficher la superposition du gabarit",
             "Mostrar superposición de página principal",
             "親ページオーバーレイを表示",
             "显示父页面叠加",
@@ -3541,7 +3541,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ),
     (
         "Controlled by Parent",
-        ["Durch übergeordnete Seite gesteuert", "Contrôlé par le parent", "Controlado por principal", "親ページで制御", "由父页面控制"],
+        ["Durch übergeordnete Seite gesteuert", "Contrôlé par le gabarit", "Controlado por principal", "親ページで制御", "由父页面控制"],
     ),
     ("US Business Card", ["US-Visitenkarte", "Carte de visite US", "Tarjeta de visita EE. UU.", "US 名刺", "美国名片"]),
     (
@@ -4226,7 +4226,7 @@ const TABLE: &[(&str, [&str; 5])] = &[
         "Bullets and Numbering…",
         ["Aufzählungszeichen und Nummerierung…", "Puces et numérotation…", "Viñetas y numeración…", "箇条書き記号と番号付け…", "项目符号和编号…"],
     ),
-    ("List:", ["Liste:", "Liste:", "Lista:", "リスト:", "列表："]),
+    ("List:", ["Liste:", "Liste :", "Lista:", "リスト:", "列表："]),
     ("Mode:", ["Modus:", "Mode :", "Modo:", "モード:", "模式："]),
     (
         "Continue from Previous Number",
@@ -4790,7 +4790,6 @@ mod tests {
         "PDF/X-4",
         "Page",
         "Pages",
-        "Parents",
         "Pathfinder",
         "Picas",
         "Portrait",

@@ -288,7 +288,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Registered Trademark Symbol", "Symbole de marque déposée"),
     ("Relink", "Rééditer le lien"),
     ("Relink to Folder", "Rééditer le lien au dossier"),
-    ("Relinked {count}", "Liens réédités : {count}"),
+    ("Relinked {count}", "Liens rétablis : {count}"),
     ("Reload Fonts", "Recharger les polices"),
     ("Remove Data Source", "Supprimer la source de données"),
     ("Remove Field", "Supprimer le champ"),
