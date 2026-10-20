@@ -62,30 +62,27 @@ pub fn copied_objects_text(s: &Session) -> String {
     if text.is_empty() { '\u{FFFC}'.to_string() } else { text }
 }
 
-/// The system clipboard's text for Paste: none when it is what the last copy (of objects, no text
-/// copied since) put there, so the copied objects paste instead.
-fn paste_param_text(s: &Session, p: &Value) -> Option<String> {
-    let text = super::str_param(p, "text").filter(|t| !t.is_empty())?;
-    let own = s.text_clipboard.is_none() && s.clipboard.is_some() && text.replace("\r\n", "\n") == copied_objects_text(s).replace("\r\n", "\n");
-    (!own).then(|| text.to_string())
+/// `text` (the system clipboard's) is what the last copy put there: objects were copied last and
+/// it is their placeholder, so Paste stands for the copied objects.
+fn is_objects_placeholder(s: &Session, text: &str) -> bool {
+    s.text_clipboard.is_none() && s.clipboard.is_some() && text.replace("\r\n", "\n") == copied_objects_text(s).replace("\r\n", "\n")
 }
 
 /// Paste text at the insertion point: the formatted copy when the system clipboard still holds
 /// what was copied here (or `formatted` is forced), else plain text in the insertion format.
-/// Objects copied last paste as anchored objects only when `text` (the system clipboard) is
-/// absent: other text there was copied in another app since.
+/// With `formatted`, objects copied last paste as anchored objects when `text` is absent or their
+/// placeholder; other text was copied in another app since. Objects that can't be anchored (text
+/// frames, into a table cell) paste as their placeholder text.
 fn paste_text(s: &mut Session, text: Option<String>, formatted: bool) -> Result<Value> {
     let t = s.doc()?.selection.text.ok_or_else(|| super::bad("edit.paste", "no insertion point"))?;
     let clip = s.text_clipboard.clone();
-    // Items copied last (no text copied since) paste into the text as anchored objects.
-    if formatted
-        && text.is_none()
-        && clip.is_none()
+    let own = formatted && clip.is_none() && s.clipboard.is_some() && text.as_deref().is_none_or(|x| is_objects_placeholder(s, x));
+    if own
         && t.cell.is_none()
         && let Some(items) = s.clipboard.clone()
     {
         let list: Vec<designcraft_doc::Item> = items.spreads.first().map(|sp| sp.items.iter().map(|i| (**i).clone()).collect()).unwrap_or_default();
-        if !list.is_empty() && list.iter().all(|i| !i.is_text_frame()) {
+        if !list.is_empty() && list.iter().all(|i| super::anchored::check_item(i).is_ok()) {
             return s.edit(|d, sel| {
                 let st = d.story_mut(t.story).ok_or(designcraft_doc::DocError::NoStory(t.story))?;
                 let r = t.range();
@@ -97,6 +94,9 @@ fn paste_text(s: &mut Session, text: Option<String>, formatted: bool) -> Result<
                     .map(|i| {
                         let mut i = i.clone();
                         super::object::renumber(d, &items, &mut i, &mut stories);
+                        if d.layer(i.layer).is_none() {
+                            i.layer = d.default_layer();
+                        }
                         i
                     })
                     .collect();
@@ -120,6 +120,8 @@ fn paste_text(s: &mut Session, text: Option<String>, formatted: bool) -> Result<
             Ok(json!({"pos": end, "formatted": true}))
         });
     }
+    // U+FFFC stands for objects with no text.
+    let text = if own { Some(copied_objects_text(s)).filter(|m| m != "\u{FFFC}") } else { text };
     let text = text.or_else(|| clip.map(|(_, p)| p)).ok_or_else(|| super::bad("edit.paste", "clipboard is empty"))?;
     let text = outside_text(&text)?;
     s.execute("text.insert", &json!({"text": text, "raw": true}))
@@ -341,7 +343,7 @@ pub fn specs() -> Vec<CommandSpec> {
             Some("Cmd+Shift+V"),
             "{text?} — plain text at the insertion point, in the format there",
             super::has_text,
-            |s, p| paste_text(s, paste_param_text(s, p), false)
+            |s, p| paste_text(s, super::str_param(p, "text").map(str::to_string), false)
         ),
         cmd!(
             "edit.paste",
@@ -352,11 +354,12 @@ pub fn specs() -> Vec<CommandSpec> {
             // The system clipboard may hold text from another app, so Paste is always available.
             has_doc,
             |s, p| {
-                let text = paste_param_text(s, p);
+                let text = super::str_param(p, "text").filter(|t| !t.is_empty());
                 if s.doc()?.selection.text.is_some() {
-                    return paste_text(s, text, true);
+                    return paste_text(s, text.map(str::to_string), true);
                 }
-                if let Some(text) = text.as_deref() {
+                // The placeholder of an object copy pastes the copied objects.
+                if let Some(text) = text.filter(|t| !is_objects_placeholder(s, t)) {
                     // What our own text copy put on the clipboard keeps its formatting.
                     let slice = s.text_clipboard.clone().filter(|(_, plain)| text.replace("\r\n", "\n") == *plain).map(|(slice, _)| slice);
                     return paste_text_frame(s, p, text, slice.as_deref());
@@ -588,6 +591,36 @@ mod text_clipboard_tests {
         let r = s.execute("edit.paste", &json!({"text": marker})).unwrap();
         let id = ItemId(r["ids"][0].as_u64().unwrap());
         assert!(s.doc().unwrap().doc.item(id).unwrap().text_frame().is_none());
+        s.doc().unwrap().doc.check().unwrap();
+        // Paste without Formatting inserts the text given; empty text is no text.
+        s.execute("text.select", &json!({"story": story.0, "anchor": 0, "focus": 0})).unwrap();
+        assert!(s.execute("edit.pasteWithoutFormatting", &json!({"text": ""})).is_err());
+    }
+
+    /// Text frames, and groups holding one, can't be anchored: at a caret their copy pastes as text.
+    #[test]
+    fn copied_text_frames_paste_at_a_caret_as_their_text() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let target = frame(&mut s, "ab");
+        let copy_and_paste = |s: &mut Session, ids: Value, text: Value| {
+            s.execute("selection.set", &json!({"ids": ids})).unwrap();
+            s.execute("edit.copy", &json!({})).unwrap();
+            s.execute("text.select", &json!({"story": target.0, "anchor": 0, "focus": 0})).unwrap();
+            s.execute("edit.paste", &json!({"text": text})).unwrap()
+        };
+        let chapter = s.execute("frame.create", &json!({"rect": [72, 400, 300, 480], "content": "text", "text": "Chapter 1"})).unwrap()["id"].clone();
+        // The same text copied in another app, and the system clipboard read back as absent.
+        let r = copy_and_paste(&mut s, json!([chapter]), json!("Chapter 1"));
+        assert!(r.get("anchored").is_none(), "{r}");
+        s.execute("edit.paste", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.story(target).unwrap().text, "Chapter 1Chapter 1ab");
+        // A group with a text frame inside, its own placeholder on the system clipboard.
+        let rect = s.execute("frame.create", &json!({"rect": [72, 500, 200, 560]})).unwrap()["id"].clone();
+        let group = s.execute("object.group", &json!({"ids": [chapter, rect]})).unwrap()["id"].clone();
+        let r = copy_and_paste(&mut s, json!([group]), Value::Null);
+        assert!(r.get("anchored").is_none(), "{r}");
+        assert_eq!(s.doc().unwrap().doc.story(target).unwrap().text, "Chapter 1Chapter 1Chapter 1ab");
         s.doc().unwrap().doc.check().unwrap();
     }
 
