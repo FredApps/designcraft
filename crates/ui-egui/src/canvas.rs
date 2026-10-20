@@ -1528,16 +1528,20 @@ fn field_focused_id(ctx: &egui::Context) -> egui::Id {
 /// before the canvas: without this the canvas would take that same key for the text.
 pub fn begin_frame(ctx: &egui::Context) {
     let (id, focused) = (field_focused_id(ctx), ctx.text_edit_focused());
-    let now = ctx.input(|i| i.modifiers);
-    ctx.data_mut(|d| {
-        d.insert_temp(id, focused);
+    ctx.data_mut(|d| d.insert_temp(id, focused));
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let now = ctx.input(|i| i.modifiers);
         // The modifiers last frame ended with are the ones this frame's events began with.
-        let (_, end) = d.get_temp::<(egui::Modifiers, egui::Modifiers)>(modifiers_id()).unwrap_or((now, now));
-        d.insert_temp(modifiers_id(), (end, now));
-    });
+        ctx.data_mut(|d| {
+            let (_, end) = d.get_temp::<(egui::Modifiers, egui::Modifiers)>(modifiers_id()).unwrap_or((now, now));
+            d.insert_temp(modifiers_id(), (end, now));
+        });
+    }
 }
 
 /// (held when this frame's events began, held after them).
+#[cfg(not(target_arch = "wasm32"))]
 fn modifiers_id() -> egui::Id {
     egui::Id::new("canvas-frame-modifiers")
 }
@@ -2486,14 +2490,21 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
     // text must not delete the character before it).
     let composing_at_start = app.session.tool_composing();
     let evs = ui.input(|i| i.events.clone());
-    // The modifiers held at each event: a paste chord's own modifiers may be released in the same frame.
+    // Native only: egui-winit sends a ⌘+V chord as a paste without its key press, so the modifiers
+    // held at the paste tell Paste in Place from Paste. The web also gets the key press, and the
+    // shortcut table has already run the command. A chord's modifiers may be released in the same
+    // frame, hence the modifiers held at each event.
+    #[cfg(not(target_arch = "wasm32"))]
     let mut held =
         ui.data(|d| d.get_temp::<(egui::Modifiers, egui::Modifiers)>(modifiers_id())).map_or_else(|| ui.input(|i| i.modifiers), |(start, _)| start);
     for e in evs {
-        if let egui::Event::ModifiersChanged(m) = &e {
-            held = *m;
-        }
-        let chord = if matches!(e, egui::Event::Paste(_)) { crate::menus::paste_chord_command(app, held) } else { None };
+        #[cfg(not(target_arch = "wasm32"))]
+        let chord = {
+            if let egui::Event::ModifiersChanged(m) = &e {
+                held = *m;
+            }
+            if matches!(e, egui::Event::Paste(_)) { crate::menus::paste_chord_command(app, held) } else { None }
+        };
         let composing = composing_at_start || app.session.tool_composing();
         match e {
             egui::Event::Ime(ime) if wants_text => ime_event(app, ime, vi),
@@ -2516,6 +2527,7 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
                 let _ = app.run(id, json!({}));
             }
             // Paste in Place's chord (⌘⌥⇧V unless rebound) arrives as a paste too.
+            #[cfg(not(target_arch = "wasm32"))]
             egui::Event::Paste(_) if chord.is_some() => {
                 if let Some(id) = chord
                     && crate::menus::enabled(app, id)

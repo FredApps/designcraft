@@ -3022,6 +3022,7 @@ fn key_matches(m: egui::Modifiers, k: egui::Key, key: egui::Key, modifiers: egui
 /// `Event::Paste` with the clipboard's text and drops the key press, so the shortcut table never
 /// sees Paste in Place's chord; the modifiers held when it went down tell them apart. `None` when
 /// the chord is another one, or the native menu's accelerator takes it.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn paste_chord_command(app: &DesignApp, modifiers: egui::Modifiers) -> Option<&'static str> {
     let id = "edit.pasteInPlace";
     if app.native_menu && !app.ui.shortcuts.contains_key(id) {
