@@ -808,7 +808,7 @@ impl DesignApp {
                         Some(t.to_string())
                     }
                     None if !self.native_menu => {
-                        self.object_clip_text = Some(self.copied_objects_text());
+                        self.object_clip_text = Some(designcraft_engine::cmd::copied_objects_text(&self.session));
                         self.object_clip_text.clone()
                     }
                     None => {
@@ -906,35 +906,6 @@ impl DesignApp {
             o.entry("at").or_insert(json!([at.x, at.y]));
         }
         params
-    }
-
-    /// Plain text for the system clipboard after copying objects: the copied text frames' stories,
-    /// or U+FFFC (object replacement character) when none has text.
-    fn copied_objects_text(&self) -> String {
-        let mut stories = Vec::new();
-        if let Some(clip) = &self.session.clipboard
-            && let Some(sp) = clip.spreads.first()
-        {
-            for it in &sp.items {
-                it.walk(&mut |i| {
-                    if let Some(tf) = i.text_frame()
-                        && !stories.contains(&tf.story)
-                    {
-                        stories.push(tf.story);
-                    }
-                });
-            }
-        }
-        let text = stories
-            .iter()
-            .filter_map(|id| self.session.clipboard.as_ref()?.story(*id))
-            .map(|st| {
-                st.text.chars().filter(|c| !('\u{E000}'..='\u{E1FF}').contains(c)).map(|c| if c == '\u{2028}' { '\n' } else { c }).collect::<String>()
-            })
-            .filter(|t| !t.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n");
-        if text.is_empty() { '\u{FFFC}'.to_string() } else { text }
     }
 
     /// Handle requests produced by tools/commands (dialogs, view changes, file pickers).
