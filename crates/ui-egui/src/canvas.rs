@@ -2022,6 +2022,11 @@ fn draw_rulers(app: &DesignApp, ui: &egui::Ui, full: Rect, rect: Rect, xf: &Xf, 
 /// coordinates: the ruler origin (one per page for a page origin) moved by zero point `zp`.
 fn ruler_pieces(app: &DesignApp, doc: &Document, layout: &CanvasLayout, zp: [f64; 2]) -> Vec<(f64, f64, Point)> {
     let Some(slot) = current_slot(app, layout).and_then(|i| layout.slots.get(i)) else { return Vec::new() };
+    ruler_pieces_of(doc, slot, zp)
+}
+
+/// [`ruler_pieces`] for the spread in `slot`.
+fn ruler_pieces_of(doc: &Document, slot: &SpreadSlot, zp: [f64; 2]) -> Vec<(f64, f64, Point)> {
     let x = |v: f64, y: f64| if v.is_finite() { slot.to_canvas(Point::new(v, y)).x } else { v };
     doc.ruler_pieces(slot.spread)
         .into_iter()
@@ -2875,9 +2880,12 @@ fn guide_measure(app: &DesignApp, xf: &Xf, g: &GuideDrag) -> Option<(&'static st
     let p = g.at?;
     let st = app.session.active()?;
     let layout = CanvasLayout::new(&st.doc, st.editing_parents);
-    let pieces = ruler_pieces(app, &st.doc, &layout, st.doc.zero_point());
-    let first = pieces.first()?;
     let c = xf.to_canvas(p);
+    // Measured on the spread under the pointer, which the guide is dropped on (`guide_drag`),
+    // as the rulers measure that spread: not the one in the middle of the view.
+    let slot = layout.spread_at(c).and_then(|(r, _)| layout.slot(r)).or_else(|| current_slot(app, &layout).and_then(|i| layout.slots.get(i)))?;
+    let pieces = ruler_pieces_of(&st.doc, slot, st.doc.zero_point());
+    let first = pieces.first()?;
     let (label, value, unit) = match g.orientation {
         designcraft_doc::Orientation::Vertical => {
             // The horizontal ruler restarts at each page: the piece under the guide measures it.
@@ -4119,6 +4127,33 @@ mod tests {
         assert_eq!(g.orientation, designcraft_doc::Orientation::Horizontal);
         assert!(guide_readout(h.state(), &xf, &g).is_some_and(|t| t.starts_with("Y: ")));
         primary(&mut h, dest, false);
+    }
+
+    /// Over a spread other than the one in the middle of the view, the readout measures that
+    /// spread, the one the guide is dropped on: it reads the position the guide gets.
+    #[test]
+    fn the_guide_readout_measures_the_spread_under_the_pointer() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"pages": 5})).unwrap();
+        app.run("view.zeroPoint", json!({"at": [100, 50]})).unwrap();
+        let h = harness(app);
+        let rect = h.state().canvas_rect.unwrap();
+        let xf = Xf::new(rect, h.state().view().unwrap());
+        let st = h.state().session.active().unwrap();
+        let layout = CanvasLayout::new(&st.doc, false);
+        let current = current_slot(h.state(), &layout).unwrap();
+        // A point inside the last spread, well away from the one in view.
+        let last = layout.slots.last().unwrap();
+        assert_ne!(layout.slots.iter().position(|s| s.spread == last.spread), Some(current), "the last spread isn't the one in view");
+        let inside = Point::new(last.bounds.center().x, last.bounds.y0 + (last.bounds.y1 - last.bounds.y0) * 0.3);
+        let (r, sp) = layout.spread_at(inside).unwrap();
+        assert_eq!(r, last.spread);
+        let g = GuideDrag { orientation: designcraft_doc::Orientation::Horizontal, from: None, at: Some(xf.to_screen(inside)) };
+        let (label, v, _) = guide_measure(h.state(), &xf, &g).unwrap();
+        assert_eq!(label, "Y");
+        // The guide would be stored at `sp.y` on that spread, which its ruler reads from the zero point.
+        // (To screen and back in f32: a few hundred-thousandths of a point.)
+        assert!((v - (sp.y - 50.0)).abs() < 1e-3, "{v} vs {}", sp.y - 50.0);
     }
 
     /// The guide readout stays on the canvas: below right of the pointer in the open, flipped
