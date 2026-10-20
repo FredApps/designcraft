@@ -2884,6 +2884,11 @@ fn guide_measure(app: &DesignApp, xf: &Xf, g: &GuideDrag) -> Option<(&'static st
     // Measured on the spread under the pointer, which the guide is dropped on (`guide_drag`),
     // as the rulers measure that spread: not the one in the middle of the view.
     let slot = layout.spread_at(c).and_then(|(r, _)| layout.slot(r)).or_else(|| current_slot(app, &layout).and_then(|i| layout.slots.get(i)))?;
+    // An existing guide moves only on its own spread (`guide_drag`): over another, dropping it
+    // leaves it where it was, so there is no place to show.
+    if g.from.is_some_and(|(r, _, _)| r != slot.spread) {
+        return None;
+    }
     let pieces = ruler_pieces_of(&st.doc, slot, st.doc.zero_point());
     let first = pieces.first()?;
     let (label, value, unit) = match g.orientation {
@@ -4154,6 +4159,15 @@ mod tests {
         // The guide would be stored at `sp.y` on that spread, which its ruler reads from the zero point.
         // (To screen and back in f32: a few hundred-thousandths of a point.)
         assert!((v - (sp.y - 50.0)).abs() < 1e-3, "{v} vs {}", sp.y - 50.0);
+        // An existing guide of another spread can't be dropped there (it only moves on its own
+        // spread): no readout over this one, a readout over its own.
+        let first = layout.slots[current].spread;
+        let moving = GuideDrag { orientation: designcraft_doc::Orientation::Horizontal, from: Some((first, 0, 0)), at: Some(xf.to_screen(inside)) };
+        assert!(guide_measure(h.state(), &xf, &moving).is_none(), "an existing guide over another spread");
+        let own = layout.slots[current].bounds;
+        let over_own = Point::new(own.center().x, own.y0 + (own.y1 - own.y0) * 0.3);
+        let moving_here = GuideDrag { at: Some(xf.to_screen(over_own)), ..moving };
+        assert!(guide_measure(h.state(), &xf, &moving_here).is_some(), "over its own spread");
     }
 
     /// The guide readout stays on the canvas: below right of the pointer in the open, flipped
