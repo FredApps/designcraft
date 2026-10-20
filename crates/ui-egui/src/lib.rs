@@ -218,6 +218,9 @@ pub struct UiState {
     /// The Pages panel's parents part as its divider was last dragged, and the height the two
     /// parts shared then (None: a few rows).
     pub pages_parents_height: Option<[f32; 2]>,
+    /// The parent selected (clicked) in the Pages panel's parents list: what the panel menu's
+    /// Duplicate Parent Spread, Parent Options and Delete Parent act on.
+    pub pages_selected_parent: Option<designcraft_doc::SpreadId>,
     /// The Pages panel's Panel Options.
     pub pages_panel: panels::pages::PanelOptions,
     /// Edit › Color Settings (re-applied at start).
@@ -379,6 +382,7 @@ impl Default for UiState {
             hidden_panels: 0,
             skip_delete_pages_warning: false,
             pages_parents_height: None,
+            pages_selected_parent: None,
             pages_panel: Default::default(),
             color_settings: None,
             proof_colors: false,

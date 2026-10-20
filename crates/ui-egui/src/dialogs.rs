@@ -2069,6 +2069,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         "closeDocument" => crate::i18n::tr(&app.ui.language, "Unsaved Changes"),
         "deletePages" => crate::i18n::tr(&app.ui.language, "Warning"),
         "pagesPanelOptions" => crate::i18n::tr(&app.ui.language, "Panel Options"),
+        "parentOptions" => crate::i18n::tr(&app.ui.language, "Parent Options"),
         "updateLink" => crate::i18n::tr(&app.ui.language, "Update Link"),
         "menus" => crate::i18n::tr(&app.ui.language, "Menu Customization"),
         "importOptions" => crate::i18n::tr(&app.ui.language, "Import Options"),
@@ -2100,7 +2101,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         let available = (ctx.content_rect().size() - frame_margin - egui::vec2(16.0, 16.0)).max(egui::Vec2::splat(1.0));
         let preferred_width: f32 = match d.id.as_str() {
             "alert" => 440.0,
-            "closeDocument" | "updateLink" | "deletePages" | "newWorkspace" | "pagesPanelOptions" => 380.0,
+            "closeDocument" | "updateLink" | "deletePages" | "newWorkspace" | "pagesPanelOptions" | "parentOptions" => 380.0,
             "newDocument" => 960.0,
             "numberingSection" => 560.0,
             crate::effects_dialog::ID => 720.0,
@@ -2622,6 +2623,31 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                         ui.horizontal(|ui| {
                             crate::rtl::label(ui, crate::i18n::tr(&lang, "Resize:"));
                             combo(ui, &mut d, "resize", &resizes);
+                        });
+                    }
+                    "parentOptions" => {
+                        // As InDesign's: Prefix, Name, Based on Parent (Number of Pages is the
+                        // parent spread's own).
+                        let lang = app.ui.language.clone();
+                        egui::Grid::new("parent_options").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                            crate::rtl::label(ui, crate::i18n::tr(&lang, "Prefix:"));
+                            text_field(ui, &mut d, "prefix", 60.0);
+                            ui.end_row();
+                            crate::rtl::label(ui, crate::i18n::tr(&lang, "Name:"));
+                            text_field(ui, &mut d, "name", 200.0);
+                            ui.end_row();
+                            crate::rtl::label(ui, crate::i18n::tr(&lang, "Based on Parent:"));
+                            let bases: Vec<(String, String)> = d
+                                .fields
+                                .get("bases")
+                                .and_then(Value::as_array)
+                                .map(|a| a.iter().filter_map(|b| Some((b.get(0)?.as_str()?.to_string(), b.get(1)?.as_str()?.to_string()))).collect())
+                                .unwrap_or_default();
+                            let none = crate::i18n::tr(&lang, "[None]").to_string();
+                            let mut opts: Vec<(&str, &str)> = vec![("", none.as_str())];
+                            opts.extend(bases.iter().map(|(v, l)| (v.as_str(), l.as_str())));
+                            combo(ui, &mut d, "basedOn", &opts);
+                            ui.end_row();
                         });
                     }
                     "updateLink" => {
@@ -3450,6 +3476,12 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
                 app.ui.skip_delete_pages_warning = true;
             }
             app.run("layout.pages.delete", json!({"pages": d.fields.get("pages").cloned().unwrap_or_else(|| json!([]))}))
+        }
+        "parentOptions" => {
+            let base = d.s("basedOn");
+            let base = base.parse::<u64>().map_or(Value::Null, |id| json!(id));
+            let parent = d.fields.get("parent").cloned().unwrap_or(Value::Null);
+            app.run("layout.parents.options", json!({"parent": parent, "prefix": d.s("prefix"), "name": d.s("name"), "basedOn": base}))
         }
         "pagesPanelOptions" => {
             use crate::panels::pages::{IconSize, PanelResize};

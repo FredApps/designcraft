@@ -789,6 +789,7 @@ impl<'r> Importer<'r> {
                 prefix: e.get("SectionPrefix").unwrap_or("").to_string(),
                 marker: e.get("Marker").unwrap_or("").to_string(),
                 include_prefix: e.get("IncludeSectionPrefix") == Some("true"),
+                layout: None,
             });
         }
         self.sections.sort_by_key(|s| s.start);
@@ -802,6 +803,7 @@ impl<'r> Importer<'r> {
                     style: Default::default(),
                     prefix: String::new(),
                     marker: String::new(),
+                    layout: None,
                     include_prefix: false,
                 },
             );

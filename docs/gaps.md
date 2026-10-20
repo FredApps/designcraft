@@ -173,9 +173,9 @@ Kind: **F** feature · **U** UI/UX · **T** typography · **FF** file format · 
   Profile / Edit Original, File ▸ File Info / Open PDF / Document and Print Presets / User
   Settings, Type ▸ Size presets, Table ▸ Table Options / Cell Options submenus, Paste Before/After,
   Convert Columns, Object ▸ Interactive ▸ Convert to (form fields),
-  View ▸ Extras badges and Story Editor options. Pages panel ▸ Parent Options (Based on Parent is
-  the `layout.parents.options` command only); overriding a base parent's items on a parent spread
-  itself (overrides work on document pages only).
+  View ▸ Extras badges and Story Editor options. Overriding a base parent's items on a parent
+  spread itself (overrides work on document pages only); Save as Parent; new parents for an
+  alternate layout (its pages keep their source pages' parents).
 - **Estimate:** 40–70 h (most are thin wrappers over existing engine features).
 - **Doc:** [ui-parity.md](ui-parity.md)
 
