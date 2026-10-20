@@ -383,6 +383,31 @@ fn print_dialog(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
                 }
                 text_field(ui, d, "pages", 120.0);
             });
+            // Alternate layouts: print chosen layouts, together or as a job each.
+            let layouts: Vec<String> = app.session.active().map(|st| st.doc.layouts().into_iter().map(|l| l.name).collect()).unwrap_or_default();
+            if layouts.len() > 1 {
+                if ui.radio(range == "layouts", crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Layouts:"))).clicked() {
+                    d.fields.insert("range".into(), json!("layouts"));
+                }
+                ui.add_enabled_ui(range == "layouts", |ui| {
+                    let mut chosen: Vec<String> =
+                        d.fields.get("layouts").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_else(|| layouts.clone());
+                    ui.horizontal_wrapped(|ui| {
+                        for name in &layouts {
+                            let mut on = chosen.contains(name);
+                            if ui.checkbox(&mut on, name.as_str()).changed() {
+                                if on {
+                                    chosen.push(name.clone());
+                                } else {
+                                    chosen.retain(|x| x != name);
+                                }
+                            }
+                        }
+                    });
+                    d.fields.insert("layouts".into(), json!(layouts.iter().filter(|n| chosen.contains(n)).collect::<Vec<_>>()));
+                    check(ui, d, "separateJobs", crate::i18n::tr(&app.ui.language, "Print each layout separately"));
+                });
+            }
         });
         ui.end_row();
         ui.label("");
@@ -456,6 +481,20 @@ fn pdf_export(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
     ui.horizontal(|ui| {
         crate::rtl::label(ui, crate::i18n::tr(lang, "Page Range:"));
         text_field(ui, d, "pages", 160.0);
+        // Alternate layouts: one click puts a layout's pages in the range.
+        let layouts = app.session.active().map(|st| st.doc.layouts()).unwrap_or_default();
+        if layouts.len() > 1 {
+            egui::ComboBox::from_id_salt("pdf_layout").selected_text(crate::i18n::tr(lang, "Layout…")).width(120.0).show_ui(ui, |ui| {
+                if ui.selectable_label(false, crate::i18n::tr(lang, "All")).clicked() {
+                    d.fields.insert("pages".into(), json!("all"));
+                }
+                for l in &layouts {
+                    if ui.selectable_label(false, &l.name).clicked() {
+                        d.fields.insert("pages".into(), json!(format!("{}-{}", l.start.saturating_add(1), l.end)));
+                    }
+                }
+            });
+        }
     });
     check(ui, d, "spreads", crate::i18n::tr(lang, "Spreads"));
 
@@ -2088,6 +2127,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         "colorGroupOptions" => crate::i18n::tr(&app.ui.language, "Color Group Options"),
         "layerSettings" => crate::i18n::tr(&app.ui.language, "Layer Options"),
         crate::effects_dialog::ID => crate::i18n::tr(&app.ui.language, "Effects"),
+        crate::export_batch_dialog::ID => crate::i18n::tr(&app.ui.language, "Export Layouts and Versions"),
         id => match id.strip_prefix("cmd:").and_then(designcraft_engine::find_command) {
             Some(c) => crate::i18n::tr(&app.ui.language, c.label.trim_end_matches('…')),
             None => crate::i18n::tr(&app.ui.language, "Dialog"),
@@ -2105,6 +2145,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
             "newDocument" => 960.0,
             "numberingSection" => 560.0,
             crate::effects_dialog::ID => 720.0,
+            crate::export_batch_dialog::ID => 660.0,
             _ => 640.0,
         };
         let width = preferred_width.min(available.x);
@@ -2362,6 +2403,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                     "colorGroupOptions" => options::color_group_options(app, ui, &mut d),
                     "layerSettings" => options::layer_options(app, ui, &mut d),
                     crate::effects_dialog::ID => crate::effects_dialog::show(app, ui, &mut d),
+                    crate::export_batch_dialog::ID => crate::export_batch_dialog::show(app, ui, &mut d),
                     "preferences" => preferences(app, ui, &mut d, body_height),
                     "print" => print_dialog(app, ui, &mut d),
                     "pdfImport" => {
@@ -2845,6 +2887,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
             "updateLink" => crate::i18n::tr(&app.ui.language, "  Update  ").to_string(),
             "findFont" => crate::i18n::tr(&app.ui.language, "Replace All").to_string(),
             "newDocument" => format!("  {}  ", crate::i18n::tr(&app.ui.language, "Create")),
+            crate::export_batch_dialog::ID => format!("  {}  ", crate::i18n::tr(&app.ui.language, "Export…")),
             _ => crate::i18n::tr(&app.ui.language, "  OK  ").to_string(),
         };
         let cancel_label = match d.id.as_str() {
@@ -3303,13 +3346,19 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             app.place_file(json!({"path": d.s("path"), "pdfPage": d.n("page").unwrap_or(1.0).max(1.0) as u64, "pdfCrop": if crop.is_empty() { "crop".to_string() } else { crop }}))
         }
         "print" => {
-            let pages = if d.s("range") == "all" { Value::Null } else { json!(d.s("pages")) };
+            let pages = if d.s("range") == "range" { json!(d.s("pages")) } else { Value::Null };
             let printer = d.s("printer");
-            let r = app.run(
-                "file.print",
-                json!({"printer": if printer.is_empty() { Value::Null } else { json!(printer) }, "copies": d.n("copies").unwrap_or(1.0).max(1.0) as u64,
-                    "pages": pages, "spreads": d.b("spreads"), "marks": d.b("marks"), "bleed": d.b("bleed")}),
-            )?;
+            let mut params = json!({"printer": if printer.is_empty() { Value::Null } else { json!(printer) }, "copies": d.n("copies").unwrap_or(1.0).max(1.0) as u64,
+                "pages": pages, "spreads": d.b("spreads"), "marks": d.b("marks"), "bleed": d.b("bleed")});
+            if d.s("range") == "layouts" {
+                let chosen = d.fields.get("layouts").cloned().unwrap_or_else(|| json!([]));
+                if chosen.as_array().is_some_and(Vec::is_empty) {
+                    return Err(crate::i18n::tr(&app.ui.language, "Choose at least one layout.").to_string());
+                }
+                params["layouts"] = chosen;
+                params["separateJobs"] = json!(d.b("separateJobs"));
+            }
+            let r = app.run("file.print", params)?;
             let printer = r["printer"].as_str().unwrap_or_else(|| crate::i18n::tr(&app.ui.language, "the default printer"));
             app.status(crate::i18n::tr(&app.ui.language, "Sent {count} page(s) to {printer}").replace("{count}", &r["pages"].to_string()).replace("{printer}", printer));
             Ok(r)
@@ -3605,6 +3654,7 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
         }
         "alert" => Ok(Value::Null),
         crate::effects_dialog::ID => crate::effects_dialog::confirm(app, &d),
+        crate::export_batch_dialog::ID => crate::export_batch_dialog::confirm(app, &d),
         "findChange" => {
             let result = if d.b("objectMode") { Ok(Value::Null) } else { app.run("find.change", find_change_params(&d)) };
             // Confirmation consumes retained bounds before closing, even on an error.

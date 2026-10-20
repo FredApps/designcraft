@@ -78,6 +78,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.placeWithOptions", "Place with Import Options…", Some("Cmd+Shift+D"), "{} — Word/RTF style mapping before placing"),
     ("app.exportText", "Export Text…", None, "{path?} — the story being edited, as Text Only (.txt) or Rich Text Format (.rtf)"),
     ("app.exportPdf", "Export PDF…", None, "{path?, …file.exportPdf options} — asks for a path when none is given"),
+    (
+        "app.exportBatch",
+        "Export Layouts and Versions…",
+        None,
+        "{layouts?: [names]} — the Export Layouts and Versions dialog (several formats and layouts at once, presets)",
+    ),
     ("app.palette", "Quick Apply…", Some("Cmd+Return"), "{} — search styles and commands"),
     ("app.preferences", "Preferences…", Some("Cmd+K"), "{}"),
     ("window.uiScale", "UI Scaling", None, "{scale: 0.5–3 (1 = 100%)} — the size of the whole interface"),
@@ -336,6 +342,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "ui:app.placeWithOptions",
             "-",
             "ui:app.exportPdf",
+            "ui:app.exportBatch",
             "ui:app.packageDialog",
             "ui:app.printBooklet",
             "ui:app.exportPng",
@@ -1351,6 +1358,14 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
                 app.run("layout.pages.duplicateSpread", json!({"spread": spread}))
             };
             return Some(r);
+        }
+        "app.exportBatch" => {
+            if app.session.active().is_none() {
+                return Some(Err("no document open".into()));
+            }
+            let layouts = p.get("layouts").and_then(|v| serde_json::from_value::<Vec<String>>(v.clone()).ok());
+            crate::export_batch_dialog::open(app, layouts);
+            return Some(Ok(Value::Null));
         }
         "app.parentOptions" | "app.alternateLayoutOptions" => {
             let Some(st) = app.session.active() else { return Some(Err("no document open".into())) };

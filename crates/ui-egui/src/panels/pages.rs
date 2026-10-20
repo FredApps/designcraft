@@ -817,6 +817,11 @@ fn layout_menu(app: &mut DesignApp, ui: &mut egui::Ui, doc: &designcraft_doc::Do
         open_layout_options(app, doc, layouts, k);
         ui.close();
     }
+    if item(ui, "Export Layout…", true) {
+        let name = layouts.get(k).map(|l| l.name.clone());
+        crate::export_batch_dialog::open(app, name.map(|n| vec![n]));
+        ui.close();
+    }
     if item(ui, "Delete Alternate Layout", count > 1) {
         if app.run("layout.alternate.delete", json!({"layout": k})).is_ok() {
             app.views.clear();
