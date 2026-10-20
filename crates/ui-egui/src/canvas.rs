@@ -2663,7 +2663,7 @@ fn hidden_marks(text: &str, l: &compose::Line) -> Vec<(f64, &'static str, bool)>
         if g.len == 0 {
             continue;
         }
-        let ch = text.get(g.byte..).and_then(|t| t.chars().next()).unwrap_or(' ');
+        let Some(ch) = text.get(g.byte..).and_then(|t| t.chars().next()) else { continue };
         let mark = match ch {
             ' ' => "·",
             '\t' => "»",
