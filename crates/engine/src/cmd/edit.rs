@@ -43,13 +43,43 @@ fn copy_text(s: &mut Session) -> Result<Option<String>> {
     Ok(Some(text))
 }
 
+/// Plain text for the system clipboard after copying objects: the copied text frames' stories,
+/// or U+FFFC (object replacement character) when none has text. Paste reads it back as "the
+/// copied objects", not as text.
+pub fn copied_objects_text(s: &Session) -> String {
+    let Some(clip) = &s.clipboard else { return '\u{FFFC}'.to_string() };
+    let mut stories = Vec::new();
+    for it in clip.spreads.first().map(|sp| sp.items.as_slice()).unwrap_or_default() {
+        it.walk(&mut |i| {
+            if let Some(tf) = i.text_frame()
+                && !stories.contains(&tf.story)
+            {
+                stories.push(tf.story);
+            }
+        });
+    }
+    let text = stories.iter().filter_map(|id| clip.story(*id)).map(plain).filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n");
+    if text.is_empty() { '\u{FFFC}'.to_string() } else { text }
+}
+
+/// The system clipboard's text for Paste: none when it is what the last copy (of objects, no text
+/// copied since) put there, so the copied objects paste instead.
+fn paste_param_text(s: &Session, p: &Value) -> Option<String> {
+    let text = super::str_param(p, "text").filter(|t| !t.is_empty())?;
+    let own = s.text_clipboard.is_none() && s.clipboard.is_some() && text.replace("\r\n", "\n") == copied_objects_text(s).replace("\r\n", "\n");
+    (!own).then(|| text.to_string())
+}
+
 /// Paste text at the insertion point: the formatted copy when the system clipboard still holds
 /// what was copied here (or `formatted` is forced), else plain text in the insertion format.
+/// Objects copied last paste as anchored objects only when `text` (the system clipboard) is
+/// absent: other text there was copied in another app since.
 fn paste_text(s: &mut Session, text: Option<String>, formatted: bool) -> Result<Value> {
     let t = s.doc()?.selection.text.ok_or_else(|| super::bad("edit.paste", "no insertion point"))?;
     let clip = s.text_clipboard.clone();
     // Items copied last (no text copied since) paste into the text as anchored objects.
     if formatted
+        && text.is_none()
         && clip.is_none()
         && t.cell.is_none()
         && let Some(items) = s.clipboard.clone()
@@ -60,7 +90,17 @@ fn paste_text(s: &mut Session, text: Option<String>, formatted: bool) -> Result<
                 let st = d.story_mut(t.story).ok_or(designcraft_doc::DocError::NoStory(t.story))?;
                 let r = t.range();
                 st.delete(r.start.min(st.len())..r.end.min(st.len()));
-                let end = super::anchored::anchor_items(d, t.story, r.start, list.clone(), &Default::default())?;
+                // Fresh ids, story and asset copies for every paste, as on the page.
+                let mut stories = std::collections::HashMap::new();
+                let fresh: Vec<designcraft_doc::Item> = list
+                    .iter()
+                    .map(|i| {
+                        let mut i = i.clone();
+                        super::object::renumber(d, &items, &mut i, &mut stories);
+                        i
+                    })
+                    .collect();
+                let end = super::anchored::anchor_items(d, t.story, r.start, fresh, &Default::default())?;
                 sel.text = Some(designcraft_doc::TextSel { anchor: end, focus: end, ..t });
                 Ok(json!({"pos": end, "anchored": list.len()}))
             });
@@ -301,7 +341,7 @@ pub fn specs() -> Vec<CommandSpec> {
             Some("Cmd+Shift+V"),
             "{text?} — plain text at the insertion point, in the format there",
             super::has_text,
-            |s, p| paste_text(s, super::str_param(p, "text").map(str::to_string), false)
+            |s, p| paste_text(s, paste_param_text(s, p), false)
         ),
         cmd!(
             "edit.paste",
@@ -312,11 +352,11 @@ pub fn specs() -> Vec<CommandSpec> {
             // The system clipboard may hold text from another app, so Paste is always available.
             has_doc,
             |s, p| {
-                let text = super::str_param(p, "text").filter(|t| !t.is_empty());
+                let text = paste_param_text(s, p);
                 if s.doc()?.selection.text.is_some() {
-                    return paste_text(s, text.map(str::to_string), true);
+                    return paste_text(s, text, true);
                 }
-                if let Some(text) = text {
+                if let Some(text) = text.as_deref() {
                     // What our own text copy put on the clipboard keeps its formatting.
                     let slice = s.text_clipboard.clone().filter(|(_, plain)| text.replace("\r\n", "\n") == *plain).map(|(slice, _)| slice);
                     return paste_text_frame(s, p, text, slice.as_deref());
@@ -524,6 +564,30 @@ mod text_clipboard_tests {
         assert_eq!(r["ids"].as_array().unwrap().len(), 1);
         assert_eq!(items(&s), n + 1);
         assert!(s.doc().unwrap().doc.item(ItemId(r["ids"][0].as_u64().unwrap())).unwrap().text_frame().is_none());
+        s.doc().unwrap().doc.check().unwrap();
+    }
+
+    /// Copying a rectangle, then text in another app, pasted the rectangle into the text (#212).
+    #[test]
+    fn paste_at_a_caret_prefers_other_apps_text_to_copied_objects() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let story = frame(&mut s, "ab");
+        let rect = s.execute("frame.create", &json!({"rect": [72, 400, 200, 480]})).unwrap()["id"].clone();
+        s.execute("selection.set", &json!({"ids": [rect]})).unwrap();
+        s.execute("edit.copy", &json!({})).unwrap();
+        let marker = copied_objects_text(&s);
+        s.execute("text.select", &json!({"story": story.0, "anchor": 2, "focus": 2})).unwrap();
+        let r = s.execute("edit.paste", &json!({"text": "From elsewhere"})).unwrap();
+        assert!(r.get("anchored").is_none(), "{r}");
+        assert_eq!(s.doc().unwrap().doc.story(story).unwrap().text, "abFrom elsewhere");
+        // What the object copy put on the system clipboard still pastes the objects.
+        assert_eq!(s.execute("edit.paste", &json!({"text": marker})).unwrap()["anchored"], 1);
+        // With no insertion point too: the rectangle, not a text frame holding the marker.
+        s.execute("edit.deselectAll", &json!({})).unwrap();
+        let r = s.execute("edit.paste", &json!({"text": marker})).unwrap();
+        let id = ItemId(r["ids"][0].as_u64().unwrap());
+        assert!(s.doc().unwrap().doc.item(id).unwrap().text_frame().is_none());
         s.doc().unwrap().doc.check().unwrap();
     }
 
