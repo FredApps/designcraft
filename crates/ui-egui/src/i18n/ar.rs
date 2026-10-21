@@ -30,6 +30,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "قص"),
     ("Copy", "نسخ"),
     ("Paste", "لصق"),
+    ("Maximum:", "الحد الأقصى:"),
+    ("Paragraph Spacing Limit:", "حد تباعد الفقرات:"),
     ("Paste Vector Art", "لصق رسم متجه"),
     ("Baseline Options", "خيارات خط الأساس"),
     ("Fixed Number", "عدد ثابت"),
