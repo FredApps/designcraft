@@ -531,8 +531,11 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
         painter.rect_stroke(xf.rect(slot.bounds), 0.0, Stroke::new(hair, Color32::from_rgb(0x4a, 0x4a, 0x4a)), StrokeKind::Outside);
     }
     if !preview {
-        draw_guides(app, &painter, &xf, &doc, &layout, &t);
-        if let Some(g) = ui.data(|d| d.get_temp::<GuideDrag>(egui::Id::new(GUIDE_DRAG)))
+        let drag = ui.data(|d| d.get_temp::<GuideDrag>(egui::Id::new(GUIDE_DRAG)));
+        let press = ui.data(|d| d.get_temp::<GuidePress>(egui::Id::new(GUIDE_PRESS)));
+        let moving = drag.as_ref().zip(press).and_then(|(g, press)| moving_guides(app, &xf, rect, g, press));
+        draw_guides(app, &painter, &xf, &doc, &layout, &t, moving.as_ref());
+        if let Some(g) = drag
             && let Some(p) = g.at
         {
             let col = Color32::from_rgb(74, 227, 255);
@@ -959,9 +962,11 @@ fn shown_area(app: &DesignApp, doc: &Document, xf: &Xf, slot: &SpreadSlot) -> Re
     boxes.iter().filter_map(|o| sp.outset_rect(*o)).map(|r| xf.rect(slot.xf.transform_rect_bbox(r))).fold(trim, |a, b| a.union(b))
 }
 
-fn draw_guides(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document, layout: &CanvasLayout, t: &Tokens) {
+/// `moving`: guides being dragged, drawn where they would be dropped instead of where they are.
+fn draw_guides(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document, layout: &CanvasLayout, t: &Tokens, moving: Option<&MovingGuides>) {
     let s = &doc.settings;
-    let selection: &[GuideSel] = app.session.active().map_or(&[], |st| &st.selection.guides);
+    let selection: std::collections::HashSet<GuideSel> =
+        app.session.active().map(|st| st.selection.guides.iter().copied().collect()).unwrap_or_default();
     for slot in &layout.slots {
         let Some(sp) = doc.spread(slot.spread) else { continue };
         // Everything below is in spread coordinates, placed through the slot (which may be turned).
@@ -1018,10 +1023,20 @@ fn draw_guides(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document
                 }
             }
             // The page's own guides, then those it shows from its parent page. Selected guides are
-            // drawn thicker, in their layer's colour.
+            // drawn thicker, in their layer's color.
             let own = p.guides.len();
-            for (gi, g) in p.guides.iter().cloned().chain(doc.parent_guides(p)).enumerate().filter(|(_, g)| g.visible_in(doc)) {
-                let selected = gi < own && selection.contains(&GuideSel { spread: slot.spread, page: pi, index: gi });
+            for (gi, mut g) in p.guides.iter().cloned().chain(doc.parent_guides(p)).enumerate().filter(|(_, g)| g.visible_in(doc)) {
+                let key = GuideSel { spread: slot.spread, page: pi, index: gi };
+                let selected = gi < own && selection.contains(&key);
+                if gi < own
+                    && let Some(m) = moving
+                    && m.guides.contains(&key)
+                {
+                    g.position += match g.orientation {
+                        designcraft_doc::Orientation::Vertical => m.dx,
+                        designcraft_doc::Orientation::Horizontal => m.dy,
+                    };
+                }
                 // Spread guides cross the pasteboard; page guides their page.
                 let span = if g.spread { pasteboard } else { pr };
                 let (a, bb) = match g.orientation {
@@ -2957,8 +2972,10 @@ fn guide_at(app: &DesignApp, xf: &Xf, p: Pos2) -> Option<(designcraft_doc::Sprea
     None
 }
 
-/// Ruler guides: drag one out of a ruler, drag an existing one (Selection tools, not over an
-/// object) to move it, drop it back on a ruler to delete it. Returns true while it owns the pointer.
+/// Ruler guides: drag one out of a ruler, drag an existing one (Selection tools) to move it, drop
+/// it back on a ruler to delete it. A press near an unlocked guide takes it even over an object:
+/// the guide is selected and the object is not. Returns true from the press to the release, so
+/// the tools never see that press.
 fn guide_drag(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, rect: Rect, xf: &Xf) -> bool {
     let id = egui::Id::new(GUIDE_DRAG);
     let (pressed, released, origin, latest) =
@@ -2983,24 +3000,14 @@ fn guide_drag(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, rec
             && matches!(app.session.tool_id(), "selection" | "directSelection")
             && let Some((r, pi, gi, orientation)) = guide_at(app, xf, o)
         {
-            // Objects take precedence over the guides behind them.
-            let over_item = app.session.active().is_some_and(|st| {
-                let layout = CanvasLayout::new(&st.doc, st.editing_parents);
-                layout.spread_at(xf.to_canvas(o)).is_some_and(|(sr, p)| match sr {
-                    designcraft_doc::SpreadRef::Doc(si) => st.doc.hit_item(si, p, 3.0 / xf.zoom).is_some(),
-                    _ => false,
-                })
-            });
-            if !over_item {
-                let shift = ui.input(|i| i.modifiers.shift);
-                // A press on a guide selects it (Shift: on release, as a click adds or removes it).
-                let selected = app.session.active().is_some_and(|st| st.selection.guides.contains(&GuideSel { spread: r, page: pi, index: gi }));
-                if !shift && !selected {
-                    let _ = app.run("guide.select", json!({"spread": r, "page": pi, "index": gi}));
-                }
-                ui.data_mut(|d| d.insert_temp(egui::Id::new(GUIDE_PRESS), GuidePress { origin: o, shift }));
-                drag = Some(GuideDrag { orientation, from: Some((r, pi, gi)), at: Some(o) });
+            let shift = ui.input(|i| i.modifiers.shift);
+            // A press on a guide selects it (Shift: on release, as a click adds or removes it).
+            let selected = app.session.active().is_some_and(|st| st.selection.guides.contains(&GuideSel { spread: r, page: pi, index: gi }));
+            if !shift && !selected {
+                let _ = app.run("guide.select", json!({"spread": r, "page": pi, "index": gi}));
             }
+            ui.data_mut(|d| d.insert_temp(egui::Id::new(GUIDE_PRESS), GuidePress { origin: o, shift }));
+            drag = Some(GuideDrag { orientation, from: Some((r, pi, gi)), at: Some(o) });
         }
     }
     let Some(mut g) = drag else { return false };
@@ -3032,11 +3039,7 @@ fn guide_drag(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, rec
         return true;
     }
     // Dragging one of several selected guides moves (or deletes) them all.
-    let group = g.from.is_some_and(|(r, pi, gi)| {
-        app.session
-            .active()
-            .is_some_and(|st| st.selection.guides.len() > 1 && st.selection.guides.contains(&GuideSel { spread: r, page: pi, index: gi }))
-    });
+    let group = g.from.is_some_and(|(spread, page, index)| drags_group(app, GuideSel { spread, page, index }));
     let on_canvas = rect.contains(p);
     let target = app.session.active().and_then(|st| {
         let layout = CanvasLayout::new(&st.doc, st.editing_parents);
@@ -3061,20 +3064,8 @@ fn guide_drag(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, rec
         (Some((r, pi, gi)), false, _) => {
             let _ = app.run("guide.delete", json!({"spread": r, "page": pi, "index": gi}));
         }
-        (Some((r, pi, gi)), true, Some((tr, sp, _))) if tr == r && group => {
-            // The dragged guide goes to the pointer; the others move as far along their own axis.
-            let st = app.session.active();
-            let start = press.and_then(|press| {
-                let st = st?;
-                let layout = CanvasLayout::new(&st.doc, st.editing_parents);
-                Some(layout.slot(r)?.to_spread(xf.to_canvas(press.origin)))
-            });
-            let at = st.and_then(|st| st.doc.spread(r)?.pages.get(pi)?.guides.get(gi).map(|g| g.position));
-            if let (Some(start), Some(at)) = (start, at) {
-                let (dx, dy) = match g.orientation {
-                    designcraft_doc::Orientation::Vertical => (sp.x - at, sp.y - start.y),
-                    designcraft_doc::Orientation::Horizontal => (sp.x - start.x, sp.y - at),
-                };
+        (Some((r, _, _)), true, Some((tr, _, _))) if tr == r && group => {
+            if let Some((dx, dy)) = press.and_then(|press| guide_drag_delta(app, xf, &g, press.origin, p)) {
                 let _ = app.run("guide.moveBy", json!({"dx": dx, "dy": dy}));
             }
         }
@@ -3094,6 +3085,55 @@ fn guide_drag(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, rec
         _ => {}
     }
     true
+}
+
+/// Whether dragging guide `from` takes the other selected guides along: it is one of several
+/// selected.
+fn drags_group(app: &DesignApp, from: GuideSel) -> bool {
+    app.session.active().is_some_and(|st| st.selection.guides.len() > 1 && st.selection.guides.contains(&from))
+}
+
+/// How far a drag of the existing guide `g.from`, pressed at `origin` and now at `p` (screen),
+/// moves guides, in spread coordinates: the dragged guide goes to the pointer, the other selected
+/// guides as far along their own axis as the pointer moved. `None` while the pointer is not over
+/// the guide's own spread, where a drop leaves it in place.
+fn guide_drag_delta(app: &DesignApp, xf: &Xf, g: &GuideDrag, origin: Pos2, p: Pos2) -> Option<(f64, f64)> {
+    let (r, pi, gi) = g.from?;
+    let st = app.session.active()?;
+    let layout = CanvasLayout::new(&st.doc, st.editing_parents);
+    let (tr, sp) = layout.spread_at(xf.to_canvas(p))?;
+    if tr != r {
+        return None;
+    }
+    let start = layout.slot(r)?.to_spread(xf.to_canvas(origin));
+    let at = st.doc.spread(r)?.pages.get(pi)?.guides.get(gi)?.position;
+    let (dx, dy) = match g.orientation {
+        designcraft_doc::Orientation::Vertical => (sp.x - at, sp.y - start.y),
+        designcraft_doc::Orientation::Horizontal => (sp.x - start.x, sp.y - at),
+    };
+    (dx.is_finite() && dy.is_finite()).then_some((dx, dy))
+}
+
+/// Guides being dragged on the canvas and how far they have moved (spread coordinates).
+struct MovingGuides {
+    guides: std::collections::HashSet<GuideSel>,
+    dx: f64,
+    dy: f64,
+}
+
+/// What a drag of an existing guide moves, for the preview: the dragged guide, or every selected
+/// guide when it is one of several selected. `None` before the drag leaves the click distance,
+/// over a ruler (a drop there deletes) and off the guide's spread.
+fn moving_guides(app: &DesignApp, xf: &Xf, rect: Rect, g: &GuideDrag, press: GuidePress) -> Option<MovingGuides> {
+    let (spread, page, index) = g.from?;
+    let p = g.at?;
+    if !rect.contains(p) || (p - press.origin).length() <= GUIDE_CLICK_SLOP {
+        return None;
+    }
+    let (dx, dy) = guide_drag_delta(app, xf, g, press.origin, p)?;
+    let from = GuideSel { spread, page, index };
+    let guides = if drags_group(app, from) { app.session.active()?.selection.guides.iter().copied().collect() } else { [from].into_iter().collect() };
+    Some(MovingGuides { guides, dx, dy })
 }
 
 /// Presses in a row on the canvas: the last press's count, and where and when it was released

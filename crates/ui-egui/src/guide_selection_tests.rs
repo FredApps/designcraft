@@ -198,3 +198,61 @@ fn select_all_guides_is_in_the_edit_menu_on_the_spread_in_view() {
     h.state_mut().ui.guides = false;
     assert!(!crate::menus::menu_enabled(h.state(), "guide.selectAll"));
 }
+
+#[test]
+fn a_guide_over_a_frame_takes_the_click() {
+    let mut h = with_guides();
+    h.state_mut().run("guide.deselect", json!({})).unwrap();
+    // The vertical guide at x 200 crosses the frame.
+    let id = h.state_mut().run("frame.create", json!({"rect": [150, 500, 260, 560]})).unwrap()["id"].as_u64().unwrap();
+    h.state_mut().run("edit.deselectAll", json!({})).unwrap();
+    let bounds = |h: &Harness<'_, DesignApp>| h.state().session.doc().unwrap().doc.spreads[0].items[0].bounds();
+    let before = bounds(&h);
+    let at = screen_of(&h, 200.0, 530.0);
+    click(&mut h, at, Modifiers::NONE);
+    assert_eq!(selected(&h), [0]);
+    assert!(h.state().session.doc().unwrap().selection.items.is_empty(), "the frame is not selected");
+    // Dragging it there moves the guide, not the frame.
+    let (a, b) = (screen_of(&h, 200.0, 530.0), screen_of(&h, 230.0, 530.0));
+    drag(&mut h, a, b);
+    assert!((positions(&h)[0] - 230.0).abs() < 1.0, "{:?}", positions(&h));
+    assert_eq!(bounds(&h), before);
+    assert!(h.state().session.doc().unwrap().selection.items.is_empty());
+    // Away from the guide, a click inside the frame selects it.
+    let at = screen_of(&h, 160.0, 530.0);
+    click(&mut h, at, Modifiers::NONE);
+    assert_eq!(h.state().session.doc().unwrap().selection.items, [designcraft_doc::ItemId(id)]);
+    assert!(selected(&h).is_empty());
+}
+
+#[test]
+fn a_guide_dragged_out_of_a_ruler_is_the_selection() {
+    let mut h = with_guides();
+    h.state_mut().run("guide.select", json!({"page": 0, "index": 0})).unwrap();
+    let rect = h.state().canvas_rect.unwrap();
+    let ruler = pos2(rect.min.x + 200.0, rect.min.y - RULER / 2.0);
+    let dest = screen_of(&h, 250.0, 500.0);
+    drag(&mut h, ruler, dest);
+    let p = positions(&h);
+    assert!(p.len() == 4 && (p[3] - 500.0).abs() < 1.0, "{p:?}");
+    assert_eq!(selected(&h), [3]);
+}
+
+#[test]
+fn dragging_one_of_several_selected_guides_previews_them_all() {
+    let mut h = with_guides();
+    h.state_mut().run("guide.select", json!({"guides": [{"page": 0, "index": 0}, {"page": 0, "index": 2}]})).unwrap();
+    let (a, b) = (screen_of(&h, 200.0, 600.0), screen_of(&h, 250.0, 620.0));
+    let g = GuideDrag { orientation: designcraft_doc::Orientation::Vertical, from: Some((SpreadRef::Doc(0), 0, 0)), at: Some(b) };
+    let press = GuidePress { origin: a, shift: false };
+    let app = h.state();
+    let xf = Xf::new(app.canvas_rect.unwrap(), app.view().unwrap());
+    let m = moving_guides(app, &xf, app.canvas_rect.unwrap(), &g, press).expect("moving");
+    assert!((m.dx - 50.0).abs() < 1.0 && (m.dy - 20.0).abs() < 1.0, "{} {}", m.dx, m.dy);
+    let mut moved: Vec<usize> = m.guides.iter().map(|g| g.index).collect();
+    moved.sort_unstable();
+    assert_eq!(moved, [0, 2]);
+    // The drop moves them by the same amounts.
+    let (dx, dy) = guide_drag_delta(app, &xf, &g, a, b).unwrap();
+    assert_eq!((dx, dy), (m.dx, m.dy));
+}
