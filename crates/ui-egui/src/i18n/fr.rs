@@ -167,8 +167,6 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Single Right Quotation Mark", "Guillemet simple fermant"),
     ("Sixth Space", "Sixième d'espace"),
     ("Smart Guide Options", "Options des repères commentés"),
-    ("Space After", "Espace après"),
-    ("Space Before", "Espace avant"),
     ("Start Page #", "N° de la première page"),
     ("Step and Repeat", "Exécuter et répéter"),
     ("Story Column Direction", "Sens des colonnes de l'article"),

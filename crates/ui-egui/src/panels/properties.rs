@@ -1312,21 +1312,132 @@ fn character_section(app: &mut DesignApp, ui: &mut Ui) {
     }) {
         let _ = app.run("type.char", json!({"attrs": {"tracking": v}}));
     }
-    // Language: hyphenation, spelling and typographer's quotes follow it.
-    ui.add_space(1.0);
+    // ••• shows the rest in place, as InDesign's Properties panel does.
+    let more = temp_bool(ui, "props_char_more", false);
+    if more {
+        character_more(app, ui, &c, fw);
+    }
+    if more_options(ui, &app.ui.language).clicked() {
+        set_temp_bool(ui, "props_char_more", !more);
+    }
+}
+
+/// A percentage or other number field in one half of a two-field row, with its icon.
+#[allow(clippy::too_many_arguments)]
+fn half_field(ui: &mut Ui, b: Rect, right: bool, y: f32, half: f32, icon: &str, tip: &str, field: NumField) -> Option<f64> {
+    let t = Tokens::get(ui.ctx());
+    let x = if right { half + 10.0 } else { 0.0 };
+    let ir = sub(b, x, y + 1.0, 19.0, 19.0);
+    icons::paint(ui.painter(), ir, icon, t.icon);
+    ui.interact(ir, ui.id().with(("half_icon", icon)), Sense::hover()).on_hover_text(tip);
+    place(ui, sub(b, x + 24.0, y, half - 24.0, FIELD_H), |ui| field.width(half - 24.0).show(ui))
+}
+
+/// Properties › Character after •••: vertical and horizontal scale, baseline shift and skew,
+/// language and OpenType, then All Caps, Small Caps, Superscript, Subscript, Underline and
+/// Strikethrough, as InDesign lays them out.
+fn character_more(app: &mut DesignApp, ui: &mut Ui, c: &Value, fw: f32) {
+    let lang_ui = app.ui.language.clone();
+    let tr = |s: &str| crate::i18n::tr(&lang_ui, s).to_string();
+    let half = (fw - 10.0) / 2.0;
+    let b = block(ui, 2.0 * FIELD_H + 5.0);
+    const SCALES: &[f64] = &[25.0, 50.0, 75.0, 80.0, 90.0, 100.0, 110.0, 120.0, 125.0, 150.0, 200.0];
+    let pct = |v: &Value| v.as_f64().map(|s| (s * 1000.0).round() / 10.0);
+    let field = |id, v, suffix, decimals| NumField::number(id, v, suffix, decimals).spinner();
+    if let Some(v) = half_field(
+        ui,
+        b,
+        false,
+        0.0,
+        half,
+        "vscale",
+        &tr("Vertical Scale"),
+        field("cvscale", pct(&c["vScale"]), "%", 1).presets(SCALES).range(1.0, 1000.0),
+    ) {
+        let _ = app.run("type.char", json!({"attrs": {"vScale": v / 100.0}}));
+    }
+    if let Some(v) = half_field(
+        ui,
+        b,
+        true,
+        0.0,
+        half,
+        "hscale",
+        &tr("Horizontal Scale"),
+        field("chscale", pct(&c["hScale"]), "%", 1).presets(SCALES).range(1.0, 1000.0),
+    ) {
+        let _ = app.run("type.char", json!({"attrs": {"hScale": v / 100.0}}));
+    }
+    if let Some(v) = half_field(
+        ui,
+        b,
+        false,
+        26.0,
+        half,
+        "baseline-shift",
+        &tr("Baseline Shift"),
+        field("cbshift", c["baselineShift"].as_f64(), " pt", 2).range(-5000.0, 5000.0),
+    ) {
+        let _ = app.run("type.char", json!({"attrs": {"baselineShift": v}}));
+    }
+    if let Some(v) =
+        half_field(ui, b, true, 26.0, half, "skew", &tr("Skew (False Italic)"), field("cskew", c["skew"].as_f64(), "°", 1).range(-85.0, 85.0))
+    {
+        let _ = app.run("type.char", json!({"attrs": {"skew": v}}));
+    }
+    // Language (hyphenation, spelling and typographer's quotes follow it) and OpenType.
+    ui.add_space(4.0);
     let lang = c["language"].as_str().unwrap_or("English: USA").to_string();
-    let label = crate::i18n::tr(&app.ui.language, "Language");
-    let resp = widgets::dropdown(ui, crate::i18n::tr(&app.ui.language, &lang), fw).on_hover_ui(|ui| {
-        crate::rtl::label(ui, label);
+    let label = tr("Language");
+    let row = block(ui, FIELD_H);
+    let resp = place(ui, sub(row, 0.0, 0.0, half, FIELD_H), |ui| widgets::dropdown(ui, crate::i18n::tr(&lang_ui, &lang), half)).on_hover_ui(|ui| {
+        crate::rtl::label(ui, label.clone());
     });
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, &label));
     egui::Popup::menu(&resp).show(|ui| {
-        ui.set_min_width(fw);
+        ui.set_min_width(half);
         egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| language_menu(app, ui, &lang));
     });
-    if more_options(ui, &app.ui.language).clicked() {
-        show_panel(app, "character");
+    if place(ui, sub(row, half + 10.0, 0.0, half, FIELD_H), |ui| widgets::outline_button(ui, &tr("OpenType"), half)).clicked() {
+        show_typography_panel(app);
     }
+    // The case and position buttons.
+    ui.add_space(8.0);
+    let caps = c["capitalization"].as_str().unwrap_or("normal").to_string();
+    let pos = c["position"].as_str().unwrap_or("normal").to_string();
+    let (ul, st) = (c["underline"].as_bool().unwrap_or(false), c["strikethrough"].as_bool().unwrap_or(false));
+    let buttons: [(&str, &str, bool, Value); 6] = [
+        ("TT", "All Caps", caps == "allCaps", json!({"capitalization": if caps == "allCaps" { "normal" } else { "allCaps" }})),
+        ("Tᴛ", "Small Caps", caps == "smallCaps", json!({"capitalization": if caps == "smallCaps" { "normal" } else { "smallCaps" }})),
+        ("T¹", "Superscript", pos == "superscript", json!({"position": if pos == "superscript" { "normal" } else { "superscript" }})),
+        ("T₁", "Subscript", pos == "subscript", json!({"position": if pos == "subscript" { "normal" } else { "subscript" }})),
+        ("T̲", "Underline", ul, json!({"underline": !ul})),
+        ("T", "Strikethrough", st, json!({"strikethrough": !st})),
+    ];
+    let pitch = fw / 6.0;
+    let row = block(ui, 22.0);
+    for (i, (text, tip, on, attrs)) in buttons.into_iter().enumerate() {
+        let r = Rect::from_center_size(row.min + vec2(pitch * (i as f32 + 0.5), 11.0), vec2(26.0, 22.0));
+        let resp = ui.interact(r, ui.id().with(("case", i)), Sense::click());
+        let t = Tokens::get(ui.ctx());
+        if on {
+            ui.painter().rect_filled(r, 2.0, t.tool_active);
+        } else if resp.hovered() {
+            ui.painter().rect_filled(r, 2.0, t.hover);
+        }
+        let col = if on { t.text_strong } else { t.icon };
+        ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, text, egui::FontId::proportional(13.0), col);
+        // Strikethrough: the T struck through (a combining stroke doesn't draw in every font).
+        if i == 5 {
+            ui.painter().line_segment([r.center() + vec2(-6.0, 0.5), r.center() + vec2(6.0, 0.5)], Stroke::new(1.2, col));
+        }
+        let tip = tr(tip);
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, &tip));
+        if resp.on_hover_text(&tip).clicked() {
+            let _ = app.run("type.char", json!({"attrs": attrs}));
+        }
+    }
+    ui.add_space(4.0);
 }
 
 /// Paragraph section: the 9 alignment buttons and •••.
@@ -1356,9 +1467,63 @@ fn paragraph_section(app: &mut DesignApp, ui: &mut Ui) {
             }
         }
     });
-    if more_options(ui, &app.ui.language).clicked() {
-        show_panel(app, "paragraph");
+    let more = temp_bool(ui, "props_para_more", false);
+    if more {
+        paragraph_more(app, ui, &a["para"], fw);
     }
+    if more_options(ui, &app.ui.language).clicked() {
+        set_temp_bool(ui, "props_para_more", !more);
+    }
+}
+
+/// Properties › Paragraph after •••: left and right indent, first line and last line indent,
+/// space before and after, drop cap lines and characters, then Hyphenate and Align to Baseline
+/// Grid, as InDesign lays them out.
+fn paragraph_more(app: &mut DesignApp, ui: &mut Ui, p: &Value, fw: f32) {
+    let lang_ui = app.ui.language.clone();
+    let tr = |s: &str| crate::i18n::tr(&lang_ui, s).to_string();
+    let u = units(app);
+    let half = (fw - 10.0) / 2.0;
+    ui.add_space(4.0);
+    let b = block(ui, 4.0 * FIELD_H + 15.0);
+    let rows = [
+        (("indent-left", "Left Indent", "leftIndent"), ("indent-right", "Right Indent", "rightIndent")),
+        (("indent-first", "First Line Left Indent", "firstLineIndent"), ("indent-last", "Last Line Right Indent", "lastLineIndent")),
+        (("space-before", "Space Before", "spaceBefore"), ("space-after", "Space After", "spaceAfter")),
+    ];
+    for (i, (l, r)) in rows.into_iter().enumerate() {
+        let y = i as f32 * (FIELD_H + 5.0);
+        for (right, (icon, tip, key)) in [(false, l), (true, r)] {
+            let min = if key == "firstLineIndent" { -10_000.0 } else { 0.0 };
+            let field = NumField::measure(key, p[key].as_f64(), u).spinner().range(min, 10_000.0);
+            if let Some(v) = half_field(ui, b, right, y, half, icon, &tr(tip), field) {
+                let _ = app.run("type.para", json!({"attrs": {key: v}}));
+            }
+        }
+    }
+    let y = 3.0 * (FIELD_H + 5.0);
+    for (right, icon, tip, key, max) in [
+        (false, "drop-lines", "Drop Cap Number of Lines", "dropCapLines", designcraft_compose::MAX_DROP_CAP_LINES),
+        (true, "drop-chars", "Drop Cap One or More Characters", "dropCapChars", designcraft_compose::MAX_DROP_CAP_CHARS),
+    ] {
+        let field = NumField::number(key, p[key].as_f64(), "", 0).spinner().range(0.0, max as f64);
+        if let Some(v) = half_field(ui, b, right, y, half, icon, &tr(tip), field) {
+            let _ = app.run("type.para", json!({"attrs": {key: (v.max(0.0) as u64).min(max as u64)}}));
+        }
+    }
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        let grid = p["gridAlign"].as_str() == Some("allLines");
+        if widgets::icon_toggle(ui, "grid-baseline", grid, &tr("Align to Baseline Grid")).clicked() {
+            let _ = app.run("type.para", json!({"attrs": {"gridAlign": if grid { "none" } else { "allLines" }}}));
+        }
+        ui.add_space(12.0);
+        let mut h = p["hyphenate"].as_bool().unwrap_or(true);
+        if widgets::checkbox(ui, &mut h, &tr("Hyphenate")).changed() {
+            let _ = app.run("type.para", json!({"attrs": {"hyphenate": h}}));
+        }
+    });
+    ui.add_space(4.0);
 }
 
 fn bullets_section(app: &mut DesignApp, ui: &mut Ui) {
@@ -3058,11 +3223,48 @@ mod tests {
             app,
         );
         h.run_steps(3);
+        assert!(h.query_by_label("Language").is_none(), "under •••, as in InDesign");
+        h.get_all_by_label("More Options").next().unwrap().click();
+        h.run_steps(3);
         h.get_by_label("Language").click();
         h.run_steps(2);
         h.get_by_label("French").click();
         h.run_steps(2);
         assert_eq!(language(h.state_mut()), "French");
+    }
+
+    /// Properties › Character and Paragraph •••, as in InDesign: the sections expand in place,
+    /// with the scales, baseline shift, skew, language, OpenType and the case buttons, and the
+    /// indents, spacing and drop caps.
+    #[test]
+    fn more_options_expand_character_and_paragraph_in_place() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.run("frame.create", json!({"rect": [72, 72, 300, 200], "content": "text", "text": "If fine plants", "caret": true})).unwrap();
+        app.run("edit.selectAll", json!({})).unwrap();
+        let mut h = panel_harness(app, show);
+        h.run_steps(3);
+        for l in ["Vertical Scale", "Small Caps", "Drop Cap Number of Lines", "Space Before"] {
+            assert!(h.query_by_label(l).is_none(), "{l} hidden until •••");
+        }
+        h.get_all_by_label("More Options").next().unwrap().click();
+        h.run_steps(3);
+        h.get_by_label("Small Caps").click();
+        h.run_steps(3);
+        let _ = h.get_by_label("OpenType");
+        let _ = h.get_by_label("Language");
+        h.get_all_by_label("More Options").nth(1).unwrap().click();
+        h.run_steps(3);
+        let _ = h.get_by_label("Hyphenate");
+        h.get_by_label("Align to Baseline Grid").click();
+        h.run_steps(3);
+        let a = text_attrs(h.state_mut()).unwrap();
+        assert_eq!(a["chars"]["capitalization"], "smallCaps");
+        assert_eq!(a["para"]["gridAlign"], "allLines");
+        // ••• again folds the section.
+        h.get_all_by_label("More Options").next().unwrap().click();
+        h.run_steps(3);
+        assert!(h.query_by_label("Small Caps").is_none());
     }
 
     fn kerning(app: &mut DesignApp) -> Value {

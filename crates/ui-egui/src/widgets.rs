@@ -382,6 +382,8 @@ pub fn more_options(ui: &mut Ui, language: &str) -> Response {
     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 14.0), Sense::hover());
     let r = Rect::from_min_max(pos2(row.max.x - 26.0, row.min.y), pos2(row.max.x - 4.0, row.max.y));
     let resp = ui.interact(r, ui.id().with(("more", row.min.y as i32)), Sense::click());
+    let label = crate::i18n::tr(language, "More Options");
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     for i in 0..3 {
         ui.painter().circle_filled(pos2(r.min.x + 4.0 + i as f32 * 7.0, r.center().y), 1.9, if resp.hovered() { t.text_strong } else { t.icon });
     }
@@ -567,6 +569,8 @@ pub fn checkbox(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
         *on = !*on;
         resp.mark_changed();
     }
+    let checked = *on;
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, checked, label));
     resp
 }
 

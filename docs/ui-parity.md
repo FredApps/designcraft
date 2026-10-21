@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-15 · **Change:** minor (live corners work; document views row: scrollbars, Alt pans while editing text; Tabs panel listed as present (#343); spring-loaded Zoom navigation; paragraph style override feedback and clearing) · **Target:** Adobe InDesign 2026 (21.6, Medium Dark, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-21 · **Change:** minor (Properties › Character and Paragraph ••• expand in place; live corners work; document views row: scrollbars, Alt pans while editing text; Tabs panel listed as present (#343); spring-loaded Zoom navigation; paragraph style override feedback and clearing) · **Target:** Adobe InDesign 2026 (21.6, Medium Dark, macOS)
 
 Tools, handles, snapping, nudging, modifiers, shortcuts, panels, menus, context menus and feel,
 against InDesign 2026. The look was measured from the running app
@@ -27,7 +27,7 @@ basics of editing fail for too many users on Windows and Linux.
 | Area | InDesign 2026 | DesignCraft | Status | Evidence |
 |---|---|---|---|---|
 | Chrome: app bar, Control panel, Tools panel, dock, doc tabs, status bar | Medium Dark, measured sizes | measured look | ✓ | 11-observed-ui.md |
-| Properties panel and Contextual Task Bar | per selection | ✓, task bar movable (#143) | ✓ | |
+| Properties panel and Contextual Task Bar | per selection | ✓, task bar movable (#143); Character and Paragraph ••• expand the section in place (scales, baseline shift, skew, language, OpenType, case buttons; indents, spacing, drop caps) | ✓ | `properties.rs` `more_options_expand_character_and_paragraph_in_place` |
 | Selection tool: click, marquee, move, Alt-duplicate, resize handles, rotate from corners | ✓ | ✓ | ✓ | Cmd/Ctrl held with another tool borrows the selection tool used last (Selection or Direct Selection) for one gesture, #919 |
 | Direct Selection, Pen family, Pencil, Scissors | ✓ | ✓ | ~ | moving reference point "0" fails (#337) |
 | Live corners (yellow handle) | ✓ | ✓ widget on a selected rectangle frame; diamonds drag the corner size (Shift: one corner), Alt-click steps the shape (Shift+Alt: all) | ✓ | #186 |
