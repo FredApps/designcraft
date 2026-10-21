@@ -1393,14 +1393,14 @@ fn parse_alt(v: &Value) -> Option<AltFills> {
     }
     let d = AltFills::default();
     Some(AltFills {
-        first: v.get("first").and_then(Value::as_u64).map_or(d.first, |x| x as u32),
+        first: v.get("first").and_then(Value::as_u64).map_or(d.first, |x| u32::try_from(x).unwrap_or(u32::MAX)),
         first_color: color_param(v, "firstColor").unwrap_or(d.first_color),
         first_tint: v.get("firstTint").and_then(Value::as_f64).map_or(d.first_tint, |x| x as f32),
-        next: v.get("next").and_then(Value::as_u64).map_or(d.next, |x| x as u32),
+        next: v.get("next").and_then(Value::as_u64).map_or(d.next, |x| u32::try_from(x).unwrap_or(u32::MAX)),
         next_color: color_param(v, "nextColor").unwrap_or(d.next_color),
         next_tint: v.get("nextTint").and_then(Value::as_f64).map_or(d.next_tint, |x| x as f32),
-        skip_first: v.get("skipFirst").and_then(Value::as_u64).map_or(0, |x| x as u32),
-        skip_last: v.get("skipLast").and_then(Value::as_u64).map_or(0, |x| x as u32),
+        skip_first: v.get("skipFirst").and_then(Value::as_u64).map_or(0, |x| u32::try_from(x).unwrap_or(u32::MAX)),
+        skip_last: v.get("skipLast").and_then(Value::as_u64).map_or(0, |x| u32::try_from(x).unwrap_or(u32::MAX)),
     })
 }
 

@@ -72,7 +72,9 @@ fn add_reference(s: &mut Session, p: &Value) -> Result<Value> {
         "currentPage" => IndexRange::CurrentPage,
         "toEndOfStory" => IndexRange::ToEndOfStory,
         "suppressPageRange" => IndexRange::SuppressPageRange,
-        "nextParagraphs" => IndexRange::NextParagraphs(p.get("paragraphs").and_then(Value::as_u64).unwrap_or(1) as u32),
+        "nextParagraphs" => {
+            IndexRange::NextParagraphs(p.get("paragraphs").and_then(Value::as_u64).map_or(1, |x| u32::try_from(x).unwrap_or(u32::MAX)))
+        }
         "see" => IndexRange::See(target()),
         "seeAlso" => IndexRange::SeeAlso(target()),
         r => return Err(bad("index.addReference", format!("unknown range `{r}`"))),
