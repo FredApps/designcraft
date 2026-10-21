@@ -416,6 +416,31 @@ mod layer_tests {
         assert_eq!(s.execute("guide.list", &json!({})).unwrap()[0]["position"], 200.0);
     }
 
+    /// Layer Options › Lock Guides: the layer's guides stay where they are (moving and deleting
+    /// them is refused) while its objects stay editable.
+    #[test]
+    fn lock_guides_locks_only_the_layers_guides() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let layer = s.execute("layer.new", &json!({"name": "Grid"})).unwrap()["id"].as_u64().unwrap();
+        s.execute("layer.activate", &json!({"id": layer})).unwrap();
+        s.execute("guide.add", &json!({"orientation": "vertical", "position": 100})).unwrap();
+        let frame = s.execute("frame.create", &json!({"rect": [36, 36, 200, 200]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("layer.set", &json!({"id": layer, "lockGuides": true})).unwrap();
+        let d = s.doc().unwrap().doc.clone();
+        let g = d.spreads[0].pages[0].guides[0].clone();
+        assert!(g.visible_in(&d) && !g.editable_in(&d));
+        for command in ["guide.move", "guide.delete"] {
+            assert!(s.execute(command, &json!({"page": 0, "index": 0, "position": 200})).is_err(), "{command} moved a locked guide");
+        }
+        assert_eq!(s.execute("guide.list", &json!({})).unwrap()[0]["position"], 100.0);
+        // The layer's objects aren't locked.
+        s.execute("transform.move", &json!({"ids": [frame], "dx": 10, "dy": 0})).unwrap();
+        s.execute("layer.set", &json!({"id": layer, "lockGuides": false})).unwrap();
+        s.execute("guide.move", &json!({"page": 0, "index": 0, "position": 200})).unwrap();
+        assert_eq!(s.execute("guide.list", &json!({})).unwrap()[0]["position"], 200.0);
+    }
+
     #[test]
     fn guides_follow_their_layer() {
         let mut s = Session::new();
