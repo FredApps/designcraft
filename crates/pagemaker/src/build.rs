@@ -4,7 +4,10 @@
 use std::collections::BTreeMap;
 
 use designcraft_doc::build::NewDocument;
-use designcraft_doc::{Align as DcAlign, Document, Fill, Item, ItemId, Leading, Margins, ParaFormat, Shape, SpreadRef, Stroke};
+use designcraft_doc::{
+    Align as DcAlign, Asset, AssetId, Content, Document, Fill, Fitting, Graphic, Item, ItemId, Leading, Margins, ParaFormat, Shape, SpreadRef,
+    Stroke, TextWrap,
+};
 use designcraft_geom::{Affine, Point, Rect, Unit, shapes};
 
 use crate::PmError;
@@ -28,6 +31,10 @@ pub fn build(pm: &PmDoc) -> Result<(Document, Vec<String>), PmError> {
     // Text blocks of each story, in block order: (block, spread, rect in spread space).
     let mut blocks: BTreeMap<u32, Vec<(u32, SpreadRef, Rect, Affine)>> = BTreeMap::new();
     let mut graphics = 0usize;
+    // Embedded images already added: image index → (asset, natural size in points).
+    let mut assets: BTreeMap<usize, (AssetId, (f64, f64))> = BTreeMap::new();
+    let single_graphic =
+        pm.pages.iter().chain(std::iter::once(&pm.masters)).flatten().filter(|o| matches!(o.kind, ObjKind::Graphic { .. })).count() == 1;
     let mut shapes_kept = 0usize;
 
     let mut place = |d: &mut Document, r: SpreadRef, origin: (f64, f64), obj: &crate::model::Obj| -> Result<(), PmError> {
@@ -58,10 +65,7 @@ pub fn build(pm: &PmDoc) -> Result<(Document, Vec<String>), PmError> {
             }
             ObjKind::Box => (Shape::Rectangle, shapes::rectangle(rect), Stroke::default()),
             ObjKind::Oval => (Shape::Oval, shapes::ellipse(rect), Stroke::default()),
-            ObjKind::Graphic => {
-                graphics += 1;
-                (Shape::Rectangle, shapes::rectangle(rect), Stroke::none())
-            }
+            ObjKind::Graphic { .. } => (Shape::Rectangle, shapes::rectangle(rect), Stroke::none()),
             ObjKind::Shape => {
                 shapes_kept += 1;
                 (Shape::Rectangle, shapes::rectangle(rect), Stroke::default())
@@ -71,8 +75,38 @@ pub fn build(pm: &PmDoc) -> Result<(Document, Vec<String>), PmError> {
         it.xf = xf;
         it.stroke = stroke;
         it.fill = Fill::none();
-        if matches!(obj.kind, ObjKind::Graphic) {
-            it.name = "PageMaker graphic".into();
+        if let ObjKind::Graphic { pixels } = obj.kind {
+            // The image of that pixel size; with a single image and graphic, that one.
+            let image = pixels
+                .and_then(|(w, h)| pm.images.iter().position(|i| same_size((i.width, i.height), (w, h))))
+                .or_else(|| (pm.images.len() == 1 && single_graphic).then_some(0));
+            match image.and_then(|k| {
+                assets.get(&k).copied().or_else(|| {
+                    add_image(d, &pm.images, k).inspect(|a| {
+                        assets.insert(k, *a);
+                    })
+                })
+            }) {
+                Some((asset, (w, h))) => {
+                    // The image fills its frame, as PageMaker shows it.
+                    let xf = Affine::translate((rect.x0, rect.y0)) * Affine::scale_non_uniform(rect.width() / w, rect.height() / h);
+                    it.content = Content::Graphic(Graphic {
+                        asset,
+                        size: (w, h),
+                        xf,
+                        clip: None,
+                        auto_fit: Fitting::None,
+                        fit_align: 4,
+                        crop: [0.0; 4],
+                        wrap: TextWrap::default(),
+                        fill: Fill::none(),
+                    });
+                }
+                None => {
+                    graphics += 1;
+                    it.name = "PageMaker graphic".into();
+                }
+            }
         }
         d.insert_item(r, it, None).map_err(|e| PmError::Corrupt(e.to_string()))?;
         Ok(())
@@ -136,7 +170,9 @@ pub fn build(pm: &PmDoc) -> Result<(Document, Vec<String>), PmError> {
         warnings.push(format!("{missing} text block(s) name a story the file doesn't hold; they were left out"));
     }
     if graphics > 0 {
-        warnings.push(format!("{graphics} placed graphic(s) came in as empty frames: their images aren't imported yet"));
+        warnings.push(format!(
+            "{graphics} placed graphic(s) came in as empty frames: their images (metafiles, EPS, or ones the file doesn't hold) aren't imported yet"
+        ));
     }
     if shapes_kept > 0 {
         warnings.push(format!("{shapes_kept} polygon(s) or other drawn shape(s) came in as rectangles of their bounds"));
@@ -144,6 +180,27 @@ pub fn build(pm: &PmDoc) -> Result<(Document, Vec<String>), PmError> {
     warnings.extend(d.fix_parent_bases());
     d.check().map_err(|e| PmError::Corrupt(e.to_string()))?;
     Ok((d, warnings))
+}
+
+/// Whether a graphic that records pixel size `recorded` shows an image of size `image`: the same,
+/// or a whole multiple of it (PageMaker 4 records some images at a higher resolution).
+fn same_size(image: (u32, u32), recorded: (u32, u32)) -> bool {
+    (1..=8u32).any(|k| image.0.checked_mul(k) == Some(recorded.0) && image.1.checked_mul(k) == Some(recorded.1))
+}
+
+/// Image `k` as an asset of `d` → its id and natural size in points (a pixel a point, as at
+/// 72 ppi).
+fn add_image(d: &mut Document, images: &[crate::images::Embedded], k: usize) -> Option<(AssetId, (f64, f64))> {
+    let img = images.get(k)?;
+    let asset = Asset {
+        id: AssetId(d.alloc()),
+        name: format!("PageMaker image {}.{}", k + 1, if img.mime == "image/bmp" { "bmp" } else { "tif" }),
+        mime: img.mime.to_string(),
+        data: std::sync::Arc::new(img.data.clone()),
+        pixels: Some((img.width, img.height)),
+        ..Asset::default()
+    };
+    Some((d.add_asset(asset), (f64::from(img.width), f64::from(img.height))))
 }
 
 /// The story's text without the last paragraph mark (a frame's story ends without one).

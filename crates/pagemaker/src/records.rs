@@ -50,6 +50,7 @@ pub mod kind {
     pub const GROUP: u8 = 0x01;
     pub const PARA_RUNS: u8 = 0x0B;
     pub const TEXT: u8 = 0x0D;
+    pub const IMAGE_DATA: u8 = 0x0E;
     pub const FONTS: u8 = 0x13;
     pub const DOCUMENT: u8 = 0x18;
     pub const OBJECTS: u8 = 0x19;

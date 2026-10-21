@@ -34,6 +34,8 @@ struct Layout {
     margin_box: Option<usize>,
     /// Offset of an object's transform id (PageMaker 5 and later rotate and skew objects).
     transform: Option<usize>,
+    /// Offset of a graphic's image size in pixels.
+    pixels: usize,
 }
 
 impl Layout {
@@ -49,6 +51,7 @@ impl Layout {
                 page_rects: 40,
                 margin_box: Some(56),
                 transform: None,
+                pixels: 38,
             },
             Version::Pm5 => Layout {
                 object: 78,
@@ -60,6 +63,7 @@ impl Layout {
                 page_rects: 42,
                 margin_box: Some(58),
                 transform: Some(28),
+                pixels: 44,
             },
             Version::Pm6 => Layout {
                 object: 136,
@@ -71,6 +75,7 @@ impl Layout {
                 page_rects: 54,
                 margin_box: None,
                 transform: Some(28),
+                pixels: 44,
             },
             _ => Layout {
                 object: 258,
@@ -82,6 +87,7 @@ impl Layout {
                 page_rects: 54,
                 margin_box: None,
                 transform: Some(28),
+                pixels: 44,
             },
         }
     }
@@ -164,6 +170,9 @@ pub fn parse(data: &[u8], version: Version, mac: bool) -> Result<PmDoc, PmError>
     if let Some(g) = group.take() {
         g.finish(&mut doc);
     }
+
+    // Embedded images, in chunks.
+    doc.images = lists.iter().filter(|l| l.kind == kind::IMAGE_DATA).filter_map(|l| crate::images::embedded(l.bytes(&b, 1))).collect();
 
     // Transforms: rotation in thousandths of a degree (counter-clockwise), the unrotated box, an id.
     let transforms: BTreeMap<u32, (f64, f64, f64)> = lists
@@ -313,7 +322,8 @@ fn object(r: &[u8], lay: &Layout, mac: bool, top: f64, transforms: &BTreeMap<u32
         3 => ObjKind::Line,
         4 => ObjKind::Box,
         5 => ObjKind::Oval,
-        6 | 10 => ObjKind::Graphic,
+        6 => ObjKind::Graphic { pixels: Some((u32::from(b.u16(lay.pixels)?), u32::from(b.u16(lay.pixels + 2)?))).filter(|(w, h)| *w > 0 && *h > 0) },
+        10 => ObjKind::Graphic { pixels: None },
         11 | 12 => ObjKind::Shape,
         _ => return None,
     };

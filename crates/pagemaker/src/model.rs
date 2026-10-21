@@ -22,6 +22,8 @@ pub struct PmDoc {
     pub pages: Vec<Vec<Obj>>,
     /// Stories by id.
     pub stories: BTreeMap<u32, PmStory>,
+    /// Images embedded in the file.
+    pub images: Vec<crate::images::Embedded>,
     pub warnings: Vec<String>,
 }
 
@@ -44,8 +46,10 @@ pub enum ObjKind {
     Line,
     Box,
     Oval,
-    /// A placed graphic (image, EPS, metafile).
-    Graphic,
+    /// A placed graphic (image, EPS, metafile), with the pixel size of its image when it is one.
+    Graphic {
+        pixels: Option<(u32, u32)>,
+    },
     /// A polygon or another drawn shape, kept as its bounds.
     Shape,
 }

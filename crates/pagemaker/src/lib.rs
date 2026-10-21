@@ -13,6 +13,7 @@
 mod build;
 mod bytes;
 mod cfb;
+mod images;
 mod model;
 mod parse;
 mod records;
