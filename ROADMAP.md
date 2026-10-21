@@ -352,6 +352,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 
 Newest first.
 
+- **2026-10-21** · The loaded place cursor counts several images as InDesign does: the first image's thumbnail with "(6)" beside its badge, in place of the "6 images · drag + arrows for grid" hint. One image dragged out keeps its proportions and scale readout; a grid (arrow keys while dragging) uses the dragged rectangle. Builds on #1307 and #1392. No readiness percentage change.
 - **2026-10-20** · The loaded place cursor shows a thumbnail of the graphic, as InDesign's does; dragging with it draws the frame at the graphic's proportions from where the drag started, with its scale beside the pointer, and places exactly that frame. No readiness percentage change.
 - **2026-10-16** · Type › Reload Fonts (`font.reload`): fonts installed, edited or removed while DesignCraft runs are read again without a restart, and the open documents recompose with them (#328, #547). An edited font file is noticed by its length and modification time; bundled, added and document fonts stay as they are. InDesign does this by itself, so noticing changes automatically is still open (gap 6). No readiness percentage change.
 - **2026-10-16** · Parents can be deleted from their Pages-panel context menu or `layout.parents.delete {id}`. Applied-page and based-on references are cleared, local override copies survive, and Undo restores the parent. Addresses the deletion portion of #956; no readiness percentage change.

@@ -610,18 +610,6 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
             draw_loaded_thumbnail(app, &painter, p, &t);
         }
     }
-    if app.session.tool_id() == "placeGun"
-        && app.session.loaded.is_some()
-        && !modal_open(app)
-        && let Some(p) = ui.ctx().pointer_hover_pos().filter(|p| screen.contains(*p))
-    {
-        let galley =
-            painter.layout_no_wrap(placement_counter(&app.ui.language, app.session.loaded_queue.len() + 1), egui::FontId::proportional(12.0), t.text);
-        let size = galley.size() + vec2(10.0, 8.0);
-        let position = pos2((p.x + 22.0).min(screen.right() - size.x), (p.y + 22.0).min(screen.bottom() - size.y));
-        painter.rect_filled(Rect::from_min_size(position, size), 3.0, t.panel);
-        painter.galley(position + vec2(5.0, 4.0), galley, t.text);
-    }
 }
 
 /// Longest side of the loaded place cursor's thumbnail, in points.
@@ -652,6 +640,22 @@ fn draw_loaded_thumbnail(app: &DesignApp, painter: &egui::Painter, p: Pos2, t: &
         vec![pos2(inner.min.x, inner.max.y), pos2(inner.min.x + 3.5, inner.min.y + 2.5), pos2(inner.max.x, inner.max.y)],
         ink,
     ));
+    // Several images loaded: how many, beside the badge ("(6)"), navy with a white rim so it
+    // reads over any picture.
+    if let Some(label) = loaded_count_label(app.session.loaded.is_some().then(|| app.session.loaded_queue.len() + 1)) {
+        let at = pos2(badge.max.x + 6.0, badge.center().y);
+        let font = crate::theme::semibold(15.0);
+        for d in [vec2(-1.0, 0.0), vec2(1.0, 0.0), vec2(0.0, -1.0), vec2(0.0, 1.0)] {
+            painter.text(at + d, egui::Align2::LEFT_CENTER, &label, font.clone(), Color32::WHITE);
+        }
+        painter.text(at, egui::Align2::LEFT_CENTER, label, font, Color32::from_rgb(25, 35, 100));
+    }
+}
+
+/// The count the loaded place cursor shows, as InDesign's "(6)": only when more than one image
+/// is loaded.
+fn loaded_count_label(loaded: Option<usize>) -> Option<String> {
+    loaded.filter(|n| *n > 1).map(|n| format!("({n})"))
 }
 
 /// The loaded graphic's thumbnail texture, cached per image data.
@@ -5040,18 +5044,14 @@ mod scrollbar_tests {
     }
 }
 
-/// Localized cursor hint, with singular wording for the last image.
-fn placement_counter(language: &str, count: usize) -> String {
-    let key = if count == 1 { "1 image · drag + arrows for grid" } else { "{count} images · drag + arrows for grid" };
-    crate::i18n::tr(language, key).replace("{count}", &count.to_string())
-}
-
 #[cfg(test)]
-mod placement_counter_tests {
+mod loaded_count_tests {
+    /// The loaded cursor counts the images as InDesign's "(6)", and shows no count for the last
+    /// one or with nothing loaded.
     #[test]
-    fn counter_uses_singular_and_translates_counts() {
-        assert_eq!(super::placement_counter("", 1), "1 image · drag + arrows for grid");
-        assert_eq!(super::placement_counter("de", 3), "3 Bilder · Ziehen + Pfeiltasten für Raster");
-        assert!(!super::placement_counter("ka", 2).contains("{count}"));
+    fn the_loaded_cursor_counts_several_images() {
+        assert_eq!(super::loaded_count_label(Some(6)).as_deref(), Some("(6)"));
+        assert_eq!(super::loaded_count_label(Some(1)), None);
+        assert_eq!(super::loaded_count_label(None), None);
     }
 }

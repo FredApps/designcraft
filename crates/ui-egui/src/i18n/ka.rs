@@ -4,8 +4,6 @@
 //! Portuguese, Japanese, Italian and Ukrainian tables has a row here, plus a few labels that only
 //! the code or the command table use.
 pub(super) const TABLE: &[(&str, &str)] = &[
-    ("1 image · drag + arrows for grid", "1 გამოსახულება · ბადის შესაქმნელად გადაათრიეთ და გამოიყენეთ ისრები"),
-    ("{count} images · drag + arrows for grid", "გამოსახულებები: {count} · ბადის შესაქმნელად გადაათრიეთ და გამოიყენეთ ისრები"),
     ("Image import cancelled while a dialog is open", "გამოსახულებების იმპორტი გაუქმდა, რადგან დიალოგი გახსნილია"),
     ("File", "ფაილი"),
     ("Edit", "რედაქტირება"),
