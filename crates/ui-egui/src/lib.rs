@@ -457,6 +457,7 @@ impl UiState {
             smart_dimensions: self.smart_dimensions,
             smart_spacing: self.smart_spacing,
             zone_px: self.snap_zone,
+            guides_locked: self.guides_locked,
         }
     }
 }

@@ -66,6 +66,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Duplicate", "დუბლირება"),
     ("Select All", "ყველაფრის მონიშვნა"),
     ("Deselect All", "ყველა მონიშვნის მოხსნა"),
+    ("Select All Guides", "ყველა დამხმარე ხაზის მონიშვნა"),
+    ("Ruler Guide", "სახაზავის დამხმარე ხაზი"),
     ("Find/Change…", "ძებნა/ჩანაცვლება…"),
     ("Check Spelling…", "მართლწერის შემოწმება…"),
     ("Preferences…", "პარამეტრები…"),

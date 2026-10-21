@@ -140,6 +140,9 @@ pub struct SnapView {
     pub smart_dimensions: bool,
     pub smart_spacing: bool,
     pub zone_px: f64,
+    /// View › Grids & Guides › Lock Guides: ruler guides can't be selected or moved.
+    #[serde(default)]
+    pub guides_locked: bool,
 }
 
 impl SnapView {
@@ -153,6 +156,7 @@ impl SnapView {
         smart_dimensions: true,
         smart_spacing: true,
         zone_px: 4.0,
+        guides_locked: false,
     };
     pub const OFF: Self = Self {
         snap_to_guides: false,
@@ -164,6 +168,7 @@ impl SnapView {
         smart_dimensions: false,
         smart_spacing: false,
         zone_px: 4.0,
+        guides_locked: false,
     };
 
     /// Guides, the document grid, or smart guides are on.
