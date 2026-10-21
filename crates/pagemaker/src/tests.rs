@@ -155,3 +155,33 @@ fn dump_a_file() {
         Err(e) => eprintln!("{e}"),
     }
 }
+
+/// A file whose index asks for the whole file as text again and again: the import stops at its
+/// read budget, keeps what fits, and says something was left out.
+#[test]
+fn a_file_naming_more_data_than_it_holds_imports_with_a_warning() {
+    let mut file = sample(PM65, true);
+    // The index is the file's last bytes: add 5000 entries reading the whole file as text, in the
+    // last story group.
+    let at = u32::from_le_bytes(file[48..52].try_into().unwrap()) as usize;
+    let count = usize::from(u16::from_le_bytes(file[46..48].try_into().unwrap()));
+    assert_eq!(at + 16 * count, file.len());
+    let len = file.len() as u16;
+    for _ in 0..5000 {
+        let mut e = vec![0u8; 16];
+        e[1] = 0x0D;
+        e[2..4].copy_from_slice(&len.to_le_bytes());
+        e[4..8].copy_from_slice(&1u32.to_le_bytes());
+        e[8..10].copy_from_slice(&[0xFF, 0xFF]);
+        e[10] = 1;
+        e[11] = 0x0D;
+        file.extend(e);
+    }
+    file[46..48].copy_from_slice(&((count + 5000) as u16).to_le_bytes());
+    let started = std::time::Instant::now();
+    let im = import_pagemaker(&file).unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert!(im.warnings.iter().any(|w| w.contains("refers to more data than it holds")), "{:?}", im.warnings);
+    // The genuine file still opens without that warning.
+    assert!(import_pagemaker(&sample(PM65, true)).unwrap().warnings.iter().all(|w| !w.contains("more data")));
+}

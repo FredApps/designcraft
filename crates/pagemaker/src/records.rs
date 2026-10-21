@@ -67,13 +67,20 @@ impl List {
 pub struct Source<'a> {
     pub b: Bytes<'a>,
     left: std::cell::Cell<usize>,
+    /// A read was cut short by the budget.
+    short: std::cell::Cell<bool>,
 }
 
 impl<'a> Source<'a> {
     /// Up to four times the file (real files read each byte about once), plus a little, at most 1 GiB.
     pub fn new(b: Bytes<'a>) -> Self {
         let allowance = b.len().saturating_mul(4).saturating_add(1 << 20).min(1 << 30);
-        Source { b, left: std::cell::Cell::new(allowance) }
+        Source { b, left: std::cell::Cell::new(allowance), short: std::cell::Cell::new(false) }
+    }
+
+    /// Whether the budget ran out, so some records were left unread.
+    pub fn exhausted(&self) -> bool {
+        self.short.get()
     }
 
     /// Take up to `want` bytes of the budget; how many were granted.
@@ -81,6 +88,9 @@ impl<'a> Source<'a> {
         let left = self.left.get();
         let granted = want.min(left);
         self.left.set(left - granted);
+        if granted < want {
+            self.short.set(true);
+        }
         granted
     }
 }
@@ -118,12 +128,16 @@ pub fn index(b: &Bytes<'_>) -> Vec<List> {
     // bytes again and again: no more of either than the file has room for.
     let max_entries = MAX_ENTRIES.min(b.len() / 16 + 64);
     let mut chunks_left = b.len() / 10 + 64;
+    // Entries looked at, kept or not: a block list naming the same damaged block over and over
+    // would otherwise spin through billions of them.
+    let mut scanned = 0usize;
     let mut out = Vec::new();
     for (n, start) in runs {
         for k in 0..n {
-            if out.len() >= max_entries {
+            if out.len() >= max_entries || scanned >= max_entries {
                 return out;
             }
+            scanned += 1;
             let Some(e) = start.checked_add(k.saturating_mul(16)) else { break };
             let Some(entry) = b.slice(e, 16) else { break };
             // Every entry carries FF FF at 8; anything else is padding or damage.
@@ -191,10 +205,35 @@ mod tests {
         let src = Source::new(b);
         let text = lists[0].bytes(&src, usize::MAX);
         assert!(text.len() <= budget, "{} bytes read from a {}-byte file", text.len(), f.len());
-        // The budget is spent: nothing more comes out, whatever is asked.
+        // The budget is spent, and says so: nothing more comes out, whatever is asked.
+        assert!(src.exhausted());
         assert!(lists[0].records(&src, 1).is_empty());
         assert!(lists[0].bytes(&src, usize::MAX).is_empty());
-        // A fresh source, a cap: no more than asked.
-        assert_eq!(lists[0].bytes(&Source::new(b), 1000).len(), 1000);
+        // A fresh source, a cap: no more than asked, and the budget isn't what stopped it.
+        let fresh = Source::new(b);
+        assert_eq!(lists[0].bytes(&fresh, 1000).len(), 1000);
+        assert!(!fresh.exhausted());
+    }
+
+    /// A block list naming one block of damaged entries 65 535 times, 65 535 entries each: before
+    /// skipped entries counted, the index walked about 4.3 billion of them.
+    #[test]
+    fn damaged_entries_count_towards_the_scan_limit() {
+        let blocks_at = 64usize;
+        let entries_at = blocks_at + 10 * 65_535;
+        let mut f = vec![0u8; entries_at + 16 * 64];
+        f[6..8].copy_from_slice(&[0xFF, 0x99]);
+        // Index descriptor: a block list of 65 535 references.
+        f[45] = 1;
+        f[46..48].copy_from_slice(&u16::MAX.to_le_bytes());
+        f[48..52].copy_from_slice(&(blocks_at as u32).to_le_bytes());
+        for k in 0..65_535 {
+            let r = blocks_at + 10 * k;
+            f[r + 2..r + 4].copy_from_slice(&u16::MAX.to_le_bytes());
+            f[r + 4..r + 8].copy_from_slice(&(entries_at as u32).to_le_bytes());
+        }
+        let started = std::time::Instant::now();
+        assert!(index(&Bytes::new(&f, true)).is_empty());
+        assert!(started.elapsed() < std::time::Duration::from_secs(5), "{:?}", started.elapsed());
     }
 }

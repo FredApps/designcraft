@@ -239,6 +239,10 @@ pub fn parse(data: &[u8], version: Version, mac: bool) -> Result<PmDoc, PmError>
     if doc.pages.is_empty() {
         doc.pages.push(vec![]);
     }
+    // A file that names far more data than it holds (damage, or crafted to): what fit came in.
+    if src.exhausted() {
+        doc.warnings.push("the file refers to more data than it holds (it may be damaged): some of its content was left out".into());
+    }
     Ok(doc)
 }
 
