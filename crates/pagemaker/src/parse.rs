@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use crate::bytes::{self, Bytes};
-use crate::model::{Align, CharRun, Obj, ObjKind, ParaRun, PmDoc, PmStory};
+use crate::model::{Align, CharRun, Obj, ObjKind, ParaRun, PmColor, PmDoc, PmStory};
 use crate::records::{self, List, kind};
 use crate::{PmError, Version};
 
@@ -171,6 +171,20 @@ pub fn parse(data: &[u8], version: Version, mac: bool) -> Result<PmDoc, PmError>
         g.finish(&mut doc);
     }
 
+    // The colour table. Its first colours are the fixed ones; PageMaker 6 and later start with None.
+    let (color_size, modern) = match version {
+        Version::Pm4 => (64, false),
+        Version::Pm5 => (86, false),
+        _ => (210, true),
+    };
+    doc.colors = lists
+        .iter()
+        .filter(|l| l.kind == kind::COLORS)
+        .flat_map(|l| l.records(&b, color_size))
+        .enumerate()
+        .map(|(i, r)| color(r, i, modern, mac))
+        .collect();
+
     // Embedded images, in chunks.
     doc.images = lists.iter().filter(|l| l.kind == kind::IMAGE_DATA).filter_map(|l| crate::images::embedded(l.bytes(&b, 1))).collect();
 
@@ -270,6 +284,27 @@ fn split_runs<R: Clone>(runs: Vec<R>, lens: &[usize], len: impl Fn(&mut R) -> &m
     out
 }
 
+/// Colour `i` of the colour table.
+fn color(r: &[u8], i: usize, modern: bool, mac: bool) -> PmColor {
+    let fixed = if modern {
+        [PmColor::None, PmColor::Registration, PmColor::Paper, PmColor::Black].get(i).cloned()
+    } else {
+        [PmColor::Registration, PmColor::Paper, PmColor::Black].get(i).cloned()
+    };
+    if let Some(c) = fixed {
+        return c;
+    }
+    let b = Bytes::new(r, !mac);
+    let name = bytes::name(r.get(..32).unwrap_or(r), mac);
+    let unit = |at: usize| f32::from(b.u16(at).unwrap_or(0)) / 65535.0;
+    if modern && b.u16(34) == Some(0x18) {
+        let byte = |at: usize| f32::from(b.u8(at).unwrap_or(0)) / 255.0;
+        return PmColor::Rgb(name, [byte(38), byte(39), byte(40)]);
+    }
+    let at = if modern { 38 } else { 34 };
+    PmColor::Cmyk(name, [unit(at), unit(at + 2), unit(at + 4), unit(at + 6)])
+}
+
 /// A character of story text. PageMaker marks paragraph ends with CR; 0x19 and 0x1A are its tab
 /// and forced line break in stories (the PC writes tabs as 0x09 too).
 fn text_char(c: u8, mac: bool) -> char {
@@ -293,6 +328,7 @@ fn char_run(r: &[u8], mac: bool, fonts: &[String]) -> CharRun {
         bold: style & 1 != 0,
         italic: style & 2 != 0,
         underline: style & 4 != 0,
+        color: b.u16(8).map(usize::from),
     }
 }
 

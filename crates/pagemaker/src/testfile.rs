@@ -84,7 +84,8 @@ impl Writer {
 }
 
 /// A two-page facing document: a story threaded over both pages ("Hello" in bold 18 pt
-/// Helvetica, centred, then "world" in 10 pt Times), a box on page 1 and a line on the right master.
+/// Helvetica, teal, centred, then "world" in 10 pt Times, black), a box on page 1 and a line on
+/// the right master.
 pub fn sample(f: Fam, le: bool) -> Vec<u8> {
     let mut w = Writer::new(f, le);
     // Document record: left page (-6120..0) and right page (0..6120), 8.5×11 in.
@@ -98,6 +99,39 @@ pub fn sample(f: Fam, le: bool) -> Vec<u8> {
         r
     };
     w.list(0x13, &[font("Helvetica"), font("Times")]);
+    // Colours: the fixed ones, then "Teal" (C=100 M=0 Y=50 K=0). PageMaker 6 and later start with None.
+    let modern = f.fmt >= 50;
+    let size = match f.code {
+        0x0203 => 64,
+        0x0206 => 86,
+        _ => 210,
+    };
+    let named = |w: &Writer, name: &str, cmyk: Option<[u16; 4]>| {
+        let mut r = vec![0u8; size];
+        r[..name.len()].copy_from_slice(name.as_bytes());
+        if let Some(v) = cmyk {
+            let at = if modern { 38 } else { 34 };
+            if modern {
+                Writer::put(&mut r, 34, &w.u16(0x08));
+            }
+            for (k, x) in v.iter().enumerate() {
+                Writer::put(&mut r, at + 2 * k, &w.u16(*x));
+            }
+        }
+        r
+    };
+    let mut colors = vec![];
+    if modern {
+        colors.push(named(&w, "None", None));
+    }
+    colors.extend([
+        named(&w, "Registration", None),
+        named(&w, "Paper", None),
+        named(&w, "Black", None),
+        named(&w, "Teal", Some([65535, 0, 32768, 0])),
+    ]);
+    let black = if modern { 3 } else { 2 };
+    w.list(0x15, &colors);
     // The story.
     // The story record: its length (two 16-bit words, low first) and its id.
     let mut st = vec![0u8; 24];
@@ -105,16 +139,17 @@ pub fn sample(f: Fam, le: bool) -> Vec<u8> {
     Writer::put(&mut st, 20, &w.u32(7));
     w.list(0x1B, &[st]);
     w.list(0x0D, &b"Hello\rworld\r".iter().map(|c| vec![*c]).collect::<Vec<_>>());
-    let run = |w: &Writer, len: u16, font: u16, size: u16, style: u16| {
+    let run = |w: &Writer, len: u16, font: u16, size: u16, style: u16, color: u16| {
         let mut r = vec![0u8; f.char_run];
         Writer::put(&mut r, 0, &w.u16(len));
         Writer::put(&mut r, 2, &w.u16(font));
         Writer::put(&mut r, 4, &w.u16(size));
         Writer::put(&mut r, 6, &w.u16(0xFFFF));
+        Writer::put(&mut r, 8, &w.u16(color));
         Writer::put(&mut r, 10, &w.u16(style));
         r
     };
-    let runs = [run(&w, 6, 0, 180, 1), run(&w, 6, 1, 100, 0)];
+    let runs = [run(&w, 6, 0, 180, 1, black + 1), run(&w, 6, 1, 100, 0, black)];
     w.list(0x1C, &runs);
     let para = |w: &Writer, len: u16, align: u8| {
         let mut r = vec![0u8; f.para_run];

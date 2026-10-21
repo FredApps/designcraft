@@ -24,6 +24,8 @@ pub struct PmDoc {
     pub stories: BTreeMap<u32, PmStory>,
     /// Images embedded in the file.
     pub images: Vec<crate::images::Embedded>,
+    /// The colour table, by index.
+    pub colors: Vec<PmColor>,
     pub warnings: Vec<String>,
 }
 
@@ -61,6 +63,19 @@ pub struct PmStory {
     pub paras: Vec<ParaRun>,
 }
 
+/// A colour of the document's colour table.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PmColor {
+    None,
+    Registration,
+    Paper,
+    Black,
+    /// A named process colour: CMYK, 0–1.
+    Cmyk(String, [f32; 4]),
+    /// A named RGB colour, 0–1.
+    Rgb(String, [f32; 3]),
+}
+
 /// Formatting of `len` characters.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CharRun {
@@ -73,6 +88,8 @@ pub struct CharRun {
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
+    /// Index into the colour table.
+    pub color: Option<usize>,
 }
 
 /// Formatting of `len` characters' paragraphs.

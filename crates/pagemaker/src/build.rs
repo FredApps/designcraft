@@ -11,7 +11,7 @@ use designcraft_doc::{
 use designcraft_geom::{Affine, Point, Rect, Unit, shapes};
 
 use crate::PmError;
-use crate::model::{Align, ObjKind, PmDoc, PmStory};
+use crate::model::{Align, ObjKind, PmColor, PmDoc, PmStory};
 
 /// The document, and what didn't come across.
 pub fn build(pm: &PmDoc) -> Result<(Document, Vec<String>), PmError> {
@@ -28,6 +28,7 @@ pub fn build(pm: &PmDoc) -> Result<(Document, Vec<String>), PmError> {
     };
     let mut d = Document::new(&nd);
     let layer = d.default_layer();
+    let swatches = add_colors(&mut d, &pm.colors);
     // Text blocks of each story, in block order: (block, spread, rect in spread space).
     let mut blocks: BTreeMap<u32, Vec<(u32, SpreadRef, Rect, Affine)>> = BTreeMap::new();
     let mut graphics = 0usize;
@@ -163,7 +164,7 @@ pub fn build(pm: &PmDoc) -> Result<(Document, Vec<String>), PmError> {
             prev = Some(id);
         }
         if let Some(story) = sid.and_then(|s| d.story_mut(s)) {
-            format_story(story, st);
+            format_story(story, st, &swatches);
         }
     }
     if missing > 0 {
@@ -180,6 +181,32 @@ pub fn build(pm: &PmDoc) -> Result<(Document, Vec<String>), PmError> {
     warnings.extend(d.fix_parent_bases());
     d.check().map_err(|e| PmError::Corrupt(e.to_string()))?;
     Ok((d, warnings))
+}
+
+/// The colour table as swatches: each colour's swatch name, added to the document when it is
+/// not one of the fixed ones. A colour named like an existing swatch keeps that swatch.
+fn add_colors(d: &mut Document, colors: &[PmColor]) -> Vec<Option<String>> {
+    use designcraft_color::{Color, swatch};
+    colors
+        .iter()
+        .map(|c| {
+            let (name, color) = match c {
+                PmColor::None => return Some(swatch::NONE.to_string()),
+                PmColor::Registration => return Some(swatch::REGISTRATION.to_string()),
+                PmColor::Paper => return Some(swatch::PAPER.to_string()),
+                PmColor::Black => return Some(swatch::BLACK.to_string()),
+                PmColor::Cmyk(n, [c, m, y, k]) => (n, Color::cmyk(*c, *m, *y, *k)),
+                PmColor::Rgb(n, [r, g, b]) => (n, Color::rgb(*r, *g, *b)),
+            };
+            if name.is_empty() {
+                return None;
+            }
+            if !d.swatches.iter().any(|s| s.name == *name) {
+                d.swatches.push(swatch::Swatch::color(name, color));
+            }
+            Some(name.clone())
+        })
+        .collect()
 }
 
 /// Whether a graphic that records pixel size `recorded` shows an image of size `image`: the same,
@@ -209,7 +236,7 @@ fn story_text(st: &PmStory) -> String {
 }
 
 /// Apply the character and paragraph runs. Run lengths count characters of the file's text.
-fn format_story(story: &mut designcraft_doc::Story, st: &PmStory) {
+fn format_story(story: &mut designcraft_doc::Story, st: &PmStory, swatches: &[Option<String>]) {
     // Byte offset of each character of the story text, and its end.
     let len = story.text.len();
     let mut at: Vec<usize> = story.text.char_indices().map(|(i, _)| i).collect();
@@ -246,6 +273,10 @@ fn format_story(story: &mut designcraft_doc::Story, st: &PmStory) {
             o.leading = Some(run.leading.map_or(Leading::Auto, Leading::Points));
             if run.underline {
                 o.underline = Some(true);
+            }
+            // Text in [None] would vanish: it keeps the default colour.
+            if let Some(name) = run.color.and_then(|c| swatches.get(c)).and_then(Option::as_ref).filter(|n| *n != designcraft_color::swatch::NONE) {
+                o.fill = Some(name.clone());
             }
         });
     }

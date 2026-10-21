@@ -20,9 +20,19 @@ fn check_sample(im: &Imported) {
     assert_eq!(hello.over.font_family.as_deref(), Some("Helvetica"));
     assert_eq!(hello.over.font_style.as_deref(), Some("Bold"));
     assert_eq!(hello.over.size, Some(18.0));
+    assert_eq!(hello.over.fill.as_deref(), Some("Teal"));
+    let teal = d.swatches.iter().find(|s| s.name == "Teal").expect("the colour table's own colours become swatches");
+    assert_eq!(
+        teal.value,
+        designcraft_color::swatch::SwatchValue::Color {
+            color: designcraft_color::Color::cmyk(1.0, 0.0, 32768.0 / 65535.0, 0.0),
+            color_type: designcraft_color::swatch::ColorType::Process
+        }
+    );
     let world = st.format_after(st.text.find("world").unwrap());
     assert_eq!(world.over.font_family.as_deref(), Some("Times"));
     assert_eq!(world.over.size, Some(10.0));
+    assert_eq!(world.over.fill.as_deref(), Some(designcraft_color::swatch::BLACK));
     assert_eq!(st.paras[0].para.align, Some(designcraft_doc::Align::Center));
     // The first frame sits 72 pt in on page 1 (a right page), 72 pt down.
     let f = d.item(st.frames[0]).unwrap().bounds();
