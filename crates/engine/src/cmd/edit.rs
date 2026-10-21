@@ -256,9 +256,12 @@ pub fn specs() -> Vec<CommandSpec> {
             st.bump_revision();
             ok()
         }),
-        cmd!("edit.clear", "Clear", ["Edit"], Some("Delete"), "{ids?} — delete selected items (or the selected text)", has_doc, |s, p| {
+        cmd!("edit.clear", "Clear", ["Edit"], Some("Delete"), "{ids?} — delete selected items (or the selected text or ruler guides)", has_doc, |s, p| {
             if s.doc()?.selection.text.is_some() && p.get("ids").is_none() {
                 return super::text::delete_selection(s);
+            }
+            if p.get("ids").is_none() && s.doc()?.selection.items.is_empty() && !s.doc()?.selection.guides.is_empty() {
+                return s.execute("guide.delete", &json!({}));
             }
             let ids = super::targets(s, p)?;
             // With a placed graphic itself selected (Direct Selection), only the graphic goes: its

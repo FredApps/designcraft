@@ -567,6 +567,10 @@ impl Session {
         self.in_undo_step = nested || spec.undoable;
         let ran = (spec.run)(self, params);
         self.in_undo_step = nested;
+        if let Some(st) = self.active_mut() {
+            let old = before.as_ref().filter(|(uid, _, _)| *uid == st.uid).map(|(_, d, sel)| (d.as_ref(), sel));
+            cmd::guides::keep_selection_valid(st, old, id);
+        }
         let r = match ran {
             Ok(r) => r,
             Err(e) => {
