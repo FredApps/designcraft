@@ -546,6 +546,15 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
             } else {
                 painter.line_segment([a, b], Stroke::new(1.0, col));
             }
+            // Where it is, beside the pointer (#1282).
+            if let Some(text) = guide_readout(app, &xf, &g) {
+                let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), t.text);
+                let at = readout_at(p, galley.size(), rect);
+                let bg = Rect::from_min_size(at, galley.size()).expand(3.0);
+                painter.rect_filled(bg, 2.0, t.panel);
+                painter.rect_stroke(bg, 2.0, Stroke::new(1.0, t.border), StrokeKind::Inside);
+                painter.galley(at, galley, t.text);
+            }
         }
         draw_frames(app, &painter, &xf, &doc, &layout);
         if app.ui.hidden_characters {
@@ -2013,6 +2022,11 @@ fn draw_rulers(app: &DesignApp, ui: &egui::Ui, full: Rect, rect: Rect, xf: &Xf, 
 /// coordinates: the ruler origin (one per page for a page origin) moved by zero point `zp`.
 fn ruler_pieces(app: &DesignApp, doc: &Document, layout: &CanvasLayout, zp: [f64; 2]) -> Vec<(f64, f64, Point)> {
     let Some(slot) = current_slot(app, layout).and_then(|i| layout.slots.get(i)) else { return Vec::new() };
+    ruler_pieces_of(doc, slot, zp)
+}
+
+/// [`ruler_pieces`] for the spread in `slot`.
+fn ruler_pieces_of(doc: &Document, slot: &SpreadSlot, zp: [f64; 2]) -> Vec<(f64, f64, Point)> {
     let x = |v: f64, y: f64| if v.is_finite() { slot.to_canvas(Point::new(v, y)).x } else { v };
     doc.ruler_pieces(slot.spread)
         .into_iter()
@@ -2839,6 +2853,53 @@ struct GuideDrag {
     from: Option<(designcraft_doc::SpreadRef, usize, usize)>,
     /// Pointer position (screen).
     at: Option<Pos2>,
+}
+
+/// Where a dragged guide is, as the rulers measure it (#1282): `X: …` for a vertical guide, `Y: …`
+/// for a horizontal one, from the zero point (and the page origin, when rulers restart per page)
+/// in the document's ruler units. `None` with no document or rulers.
+fn guide_readout(app: &DesignApp, xf: &Xf, g: &GuideDrag) -> Option<String> {
+    let (label, value, unit) = guide_measure(app, xf, g)?;
+    Some(format!("{label}: {}", designcraft_geom::units::format_measure(value, unit)))
+}
+
+/// Where a pointer readout of `size` goes for a pointer at `p`: below right of it, on the other
+/// side where that would leave the canvas `area` (near its right or bottom edge), and kept inside
+/// it (with the label's 3-point frame) however small the canvas is.
+fn readout_at(p: Pos2, size: egui::Vec2, area: Rect) -> Pos2 {
+    const GAP: f32 = 12.0;
+    const PAD: f32 = 3.0;
+    let x = if p.x + GAP + size.x + PAD > area.max.x { p.x - GAP - size.x } else { p.x + GAP };
+    let y = if p.y + GAP + size.y + PAD > area.max.y { p.y - GAP - size.y } else { p.y + GAP };
+    let clamp = |v: f32, lo: f32, hi: f32| if hi < lo { lo } else { v.clamp(lo, hi) };
+    pos2(clamp(x, area.min.x + PAD, area.max.x - PAD - size.x), clamp(y, area.min.y + PAD, area.max.y - PAD - size.y))
+}
+
+/// [`guide_readout`]'s parts: the axis label, the value (points) and its unit.
+fn guide_measure(app: &DesignApp, xf: &Xf, g: &GuideDrag) -> Option<(&'static str, f64, designcraft_geom::Unit)> {
+    let p = g.at?;
+    let st = app.session.active()?;
+    let layout = CanvasLayout::new(&st.doc, st.editing_parents);
+    let c = xf.to_canvas(p);
+    // Measured on the spread under the pointer, which the guide is dropped on (`guide_drag`),
+    // as the rulers measure that spread: not the one in the middle of the view.
+    let slot = layout.spread_at(c).and_then(|(r, _)| layout.slot(r)).or_else(|| current_slot(app, &layout).and_then(|i| layout.slots.get(i)))?;
+    // An existing guide moves only on its own spread (`guide_drag`): over another, dropping it
+    // leaves it where it was, so there is no place to show.
+    if g.from.is_some_and(|(r, _, _)| r != slot.spread) {
+        return None;
+    }
+    let pieces = ruler_pieces_of(&st.doc, slot, st.doc.zero_point());
+    let first = pieces.first()?;
+    let (label, value, unit) = match g.orientation {
+        designcraft_doc::Orientation::Vertical => {
+            // The horizontal ruler restarts at each page: the piece under the guide measures it.
+            let o = pieces.iter().find(|(from, to, _)| *from <= c.x && c.x < *to).unwrap_or(first).2;
+            ("X", c.x - o.x, st.doc.settings.horizontal_units)
+        }
+        designcraft_doc::Orientation::Horizontal => ("Y", c.y - first.2.y, st.doc.settings.vertical_units),
+    };
+    value.is_finite().then_some((label, value, unit))
 }
 
 /// The guide under a screen point (within 3 px), as (spread, page, index, orientation).
@@ -4031,6 +4092,105 @@ mod tests {
         assert!((pos(designcraft_doc::Orientation::Vertical) - at.x).abs() < 0.5);
         assert!(guides.iter().all(|g| g.spread));
         assert_eq!(doc.settings.zero_point, [0.0, 0.0], "the zero point stays");
+    }
+
+    /// A guide being dragged out of a ruler says where it is, as the rulers measure it (#1282):
+    /// from the zero point, in the ruler units, and the label follows the pointer while it moves.
+    #[test]
+    fn a_dragged_guide_shows_where_it_is() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.run("view.zeroPoint", json!({"at": [100, 50]})).unwrap();
+        let mut h = harness(app);
+        let rect = h.state().canvas_rect.unwrap();
+        let dest = rect.min + vec2(160.0, 110.0);
+        let (xf, at) = {
+            let app = h.state();
+            let xf = Xf::new(rect, app.view().unwrap());
+            let st = app.session.active().unwrap();
+            (xf, CanvasLayout::new(&st.doc, false).spread_at(xf.to_canvas(dest)).unwrap().1)
+        };
+        let units = h.state().session.doc().unwrap().doc.settings.horizontal_units;
+        for (orientation, label, want) in
+            [(designcraft_doc::Orientation::Vertical, "X", at.x - 100.0), (designcraft_doc::Orientation::Horizontal, "Y", at.y - 50.0)]
+        {
+            let g = GuideDrag { orientation, from: None, at: Some(dest) };
+            let (l, v, _) = guide_measure(h.state(), &xf, &g).unwrap();
+            assert_eq!(l, label);
+            assert!((v - want).abs() < 1e-6, "{label}: {v} vs {want}");
+            let text = guide_readout(h.state(), &xf, &g).unwrap();
+            assert_eq!(text, format!("{label}: {}", designcraft_geom::units::format_measure(v, units)));
+        }
+        // While a guide is actually being dragged out of the top ruler, the readout is there.
+        let ruler = pos2(rect.min.x + 200.0, rect.min.y - RULER / 2.0);
+        h.hover_at(ruler);
+        h.step();
+        primary(&mut h, ruler, true);
+        h.event(egui::Event::PointerMoved(dest));
+        h.run_steps(2);
+        let g = h.ctx.data(|d| d.get_temp::<GuideDrag>(egui::Id::new(GUIDE_DRAG))).expect("dragging");
+        assert_eq!(g.orientation, designcraft_doc::Orientation::Horizontal);
+        assert!(guide_readout(h.state(), &xf, &g).is_some_and(|t| t.starts_with("Y: ")));
+        primary(&mut h, dest, false);
+    }
+
+    /// Over a spread other than the one in the middle of the view, the readout measures that
+    /// spread, the one the guide is dropped on: it reads the position the guide gets.
+    #[test]
+    fn the_guide_readout_measures_the_spread_under_the_pointer() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"pages": 5})).unwrap();
+        app.run("view.zeroPoint", json!({"at": [100, 50]})).unwrap();
+        let h = harness(app);
+        let rect = h.state().canvas_rect.unwrap();
+        let xf = Xf::new(rect, h.state().view().unwrap());
+        let st = h.state().session.active().unwrap();
+        let layout = CanvasLayout::new(&st.doc, false);
+        let current = current_slot(h.state(), &layout).unwrap();
+        // A point inside the last spread, well away from the one in view.
+        let last = layout.slots.last().unwrap();
+        assert_ne!(layout.slots.iter().position(|s| s.spread == last.spread), Some(current), "the last spread isn't the one in view");
+        let inside = Point::new(last.bounds.center().x, last.bounds.y0 + (last.bounds.y1 - last.bounds.y0) * 0.3);
+        let (r, sp) = layout.spread_at(inside).unwrap();
+        assert_eq!(r, last.spread);
+        let g = GuideDrag { orientation: designcraft_doc::Orientation::Horizontal, from: None, at: Some(xf.to_screen(inside)) };
+        let (label, v, _) = guide_measure(h.state(), &xf, &g).unwrap();
+        assert_eq!(label, "Y");
+        // The guide would be stored at `sp.y` on that spread, which its ruler reads from the zero point.
+        // (To screen and back in f32: a few hundred-thousandths of a point.)
+        assert!((v - (sp.y - 50.0)).abs() < 1e-3, "{v} vs {}", sp.y - 50.0);
+        // An existing guide of another spread can't be dropped there (it only moves on its own
+        // spread): no readout over this one, a readout over its own.
+        let first = layout.slots[current].spread;
+        let moving = GuideDrag { orientation: designcraft_doc::Orientation::Horizontal, from: Some((first, 0, 0)), at: Some(xf.to_screen(inside)) };
+        assert!(guide_measure(h.state(), &xf, &moving).is_none(), "an existing guide over another spread");
+        let own = layout.slots[current].bounds;
+        let over_own = Point::new(own.center().x, own.y0 + (own.y1 - own.y0) * 0.3);
+        let moving_here = GuideDrag { at: Some(xf.to_screen(over_own)), ..moving };
+        assert!(guide_measure(h.state(), &xf, &moving_here).is_some(), "over its own spread");
+    }
+
+    /// The guide readout stays on the canvas: below right of the pointer in the open, flipped
+    /// left or up near the right or bottom edge, and inside the canvas in every corner.
+    #[test]
+    fn the_guide_readout_stays_inside_the_canvas() {
+        let area = Rect::from_min_max(pos2(50.0, 40.0), pos2(850.0, 640.0));
+        let size = vec2(80.0, 14.0);
+        let inside = |at: Pos2| {
+            let r = Rect::from_min_size(at, size).expand(3.0);
+            r.min.x >= area.min.x - 1e-3 && r.min.y >= area.min.y - 1e-3 && r.max.x <= area.max.x + 1e-3 && r.max.y <= area.max.y + 1e-3
+        };
+        assert_eq!(readout_at(pos2(400.0, 300.0), size, area), pos2(412.0, 312.0), "in the open: below right");
+        let right = readout_at(pos2(845.0, 300.0), size, area);
+        assert!(right.x + size.x < 845.0 && inside(right), "near the right edge: left of the pointer, {right:?}");
+        let bottom = readout_at(pos2(400.0, 636.0), size, area);
+        assert!(bottom.y + size.y < 636.0 && inside(bottom), "near the bottom: above it, {bottom:?}");
+        for p in [area.min, pos2(area.max.x, area.min.y), area.max, pos2(area.min.x, area.max.y), pos2(-500.0, 2000.0)] {
+            assert!(inside(readout_at(p, size, area)), "{p:?}");
+        }
+        // A canvas narrower than the label: pinned to its top left, not past it.
+        let tiny = Rect::from_min_max(pos2(0.0, 0.0), pos2(40.0, 10.0));
+        assert_eq!(readout_at(pos2(20.0, 5.0), size, tiny), pos2(3.0, 3.0));
     }
 
     #[test]
