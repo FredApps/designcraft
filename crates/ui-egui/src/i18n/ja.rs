@@ -145,6 +145,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Duplicate", "複製"),
     ("Select All", "すべてを選択"),
     ("Deselect All", "すべての選択を解除"),
+    ("Select All Guides", "すべてのガイドを選択"),
+    ("Ruler Guide", "定規ガイド"),
     ("Find/Change…", "検索と置換…"),
     ("Check Spelling…", "スペルチェック…"),
     ("Preferences…", "環境設定…"),

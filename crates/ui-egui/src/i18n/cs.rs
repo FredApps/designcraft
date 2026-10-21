@@ -37,6 +37,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Duplicate", "Duplikovat"),
     ("Select All", "Vybrat vše"),
     ("Deselect All", "Zrušit výběr"),
+    ("Select All Guides", "Vybrat všechna vodítka"),
+    ("Ruler Guide", "Vodítko pravítka"),
     ("Find/Change…", "Najít/Změnit…"),
     ("Check Spelling…", "Zkontrolovat pravopis…"),
     ("Preferences…", "Předvolby…"),

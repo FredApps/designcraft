@@ -2,7 +2,7 @@
 //! selection, text ports and threads, the text caret, rulers, and pointer/keyboard input.
 
 use designcraft_compose as compose;
-use designcraft_doc::{Content, Document, Item, SpreadRef};
+use designcraft_doc::{Content, Document, GuideSel, Item, SpreadRef};
 use designcraft_engine::doc::Selection;
 use designcraft_geom::{Affine, Point, Rect as DRect, Vec2 as DVec2};
 use designcraft_tools::{CanvasLayout, Cursor, Mods, Overlay, PointerEvent, PointerKind, SpreadSlot, ToolKey};
@@ -961,6 +961,7 @@ fn shown_area(app: &DesignApp, doc: &Document, xf: &Xf, slot: &SpreadSlot) -> Re
 
 fn draw_guides(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document, layout: &CanvasLayout, t: &Tokens) {
     let s = &doc.settings;
+    let selection: &[GuideSel] = app.session.active().map_or(&[], |st| &st.selection.guides);
     for slot in &layout.slots {
         let Some(sp) = doc.spread(slot.spread) else { continue };
         // Everything below is in spread coordinates, placed through the slot (which may be turned).
@@ -1016,8 +1017,11 @@ fn draw_guides(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document
                     }
                 }
             }
-            // The page's own guides, then those it shows from its parent page.
-            for g in p.guides.iter().cloned().chain(doc.parent_guides(p)).filter(|g| g.visible_in(doc)) {
+            // The page's own guides, then those it shows from its parent page. Selected guides are
+            // drawn thicker, in their layer's colour.
+            let own = p.guides.len();
+            for (gi, g) in p.guides.iter().cloned().chain(doc.parent_guides(p)).enumerate().filter(|(_, g)| g.visible_in(doc)) {
+                let selected = gi < own && selection.contains(&GuideSel { spread: slot.spread, page: pi, index: gi });
                 // Spread guides cross the pasteboard; page guides their page.
                 let span = if g.spread { pasteboard } else { pr };
                 let (a, bb) = match g.orientation {
@@ -1027,7 +1031,12 @@ fn draw_guides(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document
                         (Point::new(g.position, span.y0), Point::new(g.position, span.y1))
                     }
                 };
-                let stroke = Stroke::new(hair(painter), Color32::from_rgb(74, 227, 255));
+                let stroke = if selected {
+                    let color = g.layer.and_then(|l| doc.layer(l)).map_or(Color32::from_rgb(79, 153, 255), |l| c32(l.color));
+                    Stroke::new(2.0, color)
+                } else {
+                    Stroke::new(hair(painter), Color32::from_rgb(74, 227, 255))
+                };
                 if g.liquid {
                     // Liquid guides are dashed.
                     painter.extend(egui::Shape::dashed_line(&[pt(a), pt(bb)], stroke, 6.0, 3.0));
@@ -2389,6 +2398,10 @@ fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, r
     if !space && !menu_open && xf.rot == 0 && zero_point_drag(app, ui, resp, rect, &xf) {
         return;
     }
+    // Hidden or locked guides can't stay selected.
+    if (!app.ui.guides || app.ui.guides_locked) && app.session.active().is_some_and(|st| !st.selection.guides.is_empty()) {
+        let _ = app.run("guide.deselect", json!({}));
+    }
     if !space && !menu_open && xf.rot == 0 && guide_drag(app, ui, resp, rect, &xf) {
         return;
     }
@@ -2855,6 +2868,19 @@ struct GuideDrag {
     at: Option<Pos2>,
 }
 
+const GUIDE_PRESS: &str = "canvas_guide_press";
+
+/// A press on an existing guide: where it was (screen) and whether Shift was down. Released
+/// where it was pressed, it is a click, which selects the guide.
+#[derive(Clone, Copy, Debug)]
+struct GuidePress {
+    origin: Pos2,
+    shift: bool,
+}
+
+/// How far (screen pixels) the pointer may move between press and release for a click.
+const GUIDE_CLICK_SLOP: f32 = 3.0;
+
 /// Where a dragged guide is, as the rulers measure it (#1282): `X: …` for a vertical guide, `Y: …`
 /// for a horizontal one, from the zero point (and the page origin, when rulers restart per page)
 /// in the document's ruler units. `None` with no document or rulers.
@@ -2966,6 +2992,13 @@ fn guide_drag(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, rec
                 })
             });
             if !over_item {
+                let shift = ui.input(|i| i.modifiers.shift);
+                // A press on a guide selects it (Shift: on release, as a click adds or removes it).
+                let selected = app.session.active().is_some_and(|st| st.selection.guides.contains(&GuideSel { spread: r, page: pi, index: gi }));
+                if !shift && !selected {
+                    let _ = app.run("guide.select", json!({"spread": r, "page": pi, "index": gi}));
+                }
+                ui.data_mut(|d| d.insert_temp(egui::Id::new(GUIDE_PRESS), GuidePress { origin: o, shift }));
                 drag = Some(GuideDrag { orientation, from: Some((r, pi, gi)), at: Some(o) });
             }
         }
@@ -2983,7 +3016,27 @@ fn guide_drag(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, rec
         return true;
     }
     ui.data_mut(|d| d.remove::<GuideDrag>(id));
+    let press: Option<GuidePress> = ui.data_mut(|d| {
+        let press = d.get_temp(egui::Id::new(GUIDE_PRESS));
+        d.remove::<GuidePress>(egui::Id::new(GUIDE_PRESS));
+        press
+    });
     let Some(p) = g.at else { return true };
+    if let (Some((r, pi, gi)), Some(press)) = (g.from, press)
+        && (p - press.origin).length() <= GUIDE_CLICK_SLOP
+    {
+        // A click: the guide is selected (at the press); Shift adds it or removes it.
+        if press.shift {
+            let _ = app.run("guide.select", json!({"spread": r, "page": pi, "index": gi, "toggle": true}));
+        }
+        return true;
+    }
+    // Dragging one of several selected guides moves (or deletes) them all.
+    let group = g.from.is_some_and(|(r, pi, gi)| {
+        app.session
+            .active()
+            .is_some_and(|st| st.selection.guides.len() > 1 && st.selection.guides.contains(&GuideSel { spread: r, page: pi, index: gi }))
+    });
     let on_canvas = rect.contains(p);
     let target = app.session.active().and_then(|st| {
         let layout = CanvasLayout::new(&st.doc, st.editing_parents);
@@ -3002,8 +3055,28 @@ fn guide_drag(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::Response, rec
     };
     match (g.from, on_canvas, target) {
         // Dropped back on a ruler: delete.
+        (Some(_), false, _) if group => {
+            let _ = app.run("guide.delete", json!({}));
+        }
         (Some((r, pi, gi)), false, _) => {
             let _ = app.run("guide.delete", json!({"spread": r, "page": pi, "index": gi}));
+        }
+        (Some((r, pi, gi)), true, Some((tr, sp, _))) if tr == r && group => {
+            // The dragged guide goes to the pointer; the others move as far along their own axis.
+            let st = app.session.active();
+            let start = press.and_then(|press| {
+                let st = st?;
+                let layout = CanvasLayout::new(&st.doc, st.editing_parents);
+                Some(layout.slot(r)?.to_spread(xf.to_canvas(press.origin)))
+            });
+            let at = st.and_then(|st| st.doc.spread(r)?.pages.get(pi)?.guides.get(gi).map(|g| g.position));
+            if let (Some(start), Some(at)) = (start, at) {
+                let (dx, dy) = match g.orientation {
+                    designcraft_doc::Orientation::Vertical => (sp.x - at, sp.y - start.y),
+                    designcraft_doc::Orientation::Horizontal => (sp.x - start.x, sp.y - at),
+                };
+                let _ = app.run("guide.moveBy", json!({"dx": dx, "dy": dy}));
+            }
         }
         (Some((r, pi, gi)), true, Some((tr, sp, _))) if tr == r => {
             let _ = app.run("guide.move", json!({"spread": r, "page": pi, "index": gi, "position": pos_of(sp)}));
@@ -3051,6 +3124,10 @@ fn release_clicks(press: Clicks, pos: Pos2, now: f64, dist: f32) -> Clicks {
 #[cfg(test)]
 #[path = "parent_canvas_tests.rs"]
 mod parent_canvas_tests;
+
+#[cfg(test)]
+#[path = "guide_selection_tests.rs"]
+mod guide_selection_tests;
 
 #[cfg(test)]
 mod tests {

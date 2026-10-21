@@ -366,6 +366,7 @@ pub const MENUS: &[(&str, &[&str])] = &[
             "cmd:edit.stepAndRepeat",
             "-",
             "cmd:edit.selectAll",
+            "cmd:guide.selectAll",
             "cmd:edit.deselectAll",
             "-",
             "ui:app.findChange",
@@ -1320,16 +1321,7 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
             Ok(Value::Null)
         }
         "app.deleteAllGuides" => {
-            let Some(st) = app.session.active() else { return Some(Err("no document open".into())) };
-            let page = crate::canvas::current_page(app).unwrap_or(0);
-            let spread = if st.editing_parents {
-                // The parent spread the canvas shows.
-                let layout = designcraft_tools::CanvasLayout::new(&st.doc, true);
-                let shown = crate::canvas::current_slot(app, &layout).and_then(|i| layout.slots.get(i)).map(|s| s.spread);
-                json!(shown.unwrap_or(designcraft_doc::SpreadRef::Parent(0)))
-            } else {
-                json!(st.doc.page_loc(page).map_or(0, |l| l.0))
-            };
+            let Some(spread) = guide_spread(app) else { return Some(Err("no document open".into())) };
             return Some(app.run("guide.deleteAll", json!({"spread": spread})));
         }
         "app.deletePage" | "app.duplicateSpread" => {
@@ -2439,6 +2431,9 @@ pub fn menu_enabled(app: &DesignApp, id: &str) -> bool {
     if id.starts_with("fit.") {
         return enabled(app, "object.fit");
     }
+    if id == "guide.selectAll" && (!app.ui.guides || app.ui.guides_locked) {
+        return false;
+    }
     if ui_label(id).is_some() {
         return app.session.active().is_some() || id.starts_with("app.") || id.starts_with("window.") || id.starts_with("help.");
     }
@@ -2540,6 +2535,16 @@ fn activate_inner(app: &mut DesignApp, id: &str, params: &Value) {
         app.ui.dialog = Some(crate::dialogs::Dialog::new(&format!("cmd:{id}"), json!({})));
         return;
     }
+    // Select All Guides: on the spread in view, while guides are shown and not locked.
+    if params.is_null() && id == "guide.selectAll" {
+        if app.ui.guides
+            && !app.ui.guides_locked
+            && let Some(spread) = guide_spread(app)
+        {
+            let _ = app.run(id, json!({"spread": spread}));
+        }
+        return;
+    }
     let p = if params.is_null() { json!({}) } else { params.clone() };
     // Update Link asks before replacing edits made to linked text in the layout.
     if id == "links.update" {
@@ -2547,6 +2552,20 @@ fn activate_inner(app: &mut DesignApp, id: &str, params: &Value) {
         return;
     }
     let _ = app.run(id, p);
+}
+
+/// The spread the guide commands of the menus act on: the one in view (a parent spread while
+/// parents are edited).
+fn guide_spread(app: &DesignApp) -> Option<Value> {
+    let st = app.session.active()?;
+    let page = crate::canvas::current_page(app).unwrap_or(0);
+    Some(if st.editing_parents {
+        let layout = designcraft_tools::CanvasLayout::new(&st.doc, true);
+        let shown = crate::canvas::current_slot(app, &layout).and_then(|i| layout.slots.get(i)).map(|s| s.spread);
+        json!(shown.unwrap_or(designcraft_doc::SpreadRef::Parent(0)))
+    } else {
+        json!(st.doc.page_loc(page).map_or(0, |l| l.0))
+    })
 }
 
 /// A menu button whose popup stays within the viewport and scrolls when needed.

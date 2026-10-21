@@ -418,7 +418,9 @@ fn same_guide_addresses(old: &Document, new: &Document) -> bool {
             && a.iter().zip(b).all(|(a, b)| {
                 a.pages.len() == b.pages.len()
                     && a.pages.iter().zip(&b.pages).all(|(a, b)| {
-                        a.id == b.id && a.guides.len() <= b.guides.len() && a.guides.iter().zip(&b.guides).all(|(a, b)| a.orientation == b.orientation)
+                        a.id == b.id
+                            && a.guides.len() <= b.guides.len()
+                            && a.guides.iter().zip(&b.guides).all(|(a, b)| a.orientation == b.orientation)
                     })
             })
     };

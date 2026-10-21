@@ -146,6 +146,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Duplicate", "Дублювати"),
     ("Select All", "Виділити все"),
     ("Deselect All", "Зняти всі виділення"),
+    ("Select All Guides", "Виділити всі напрямні"),
+    ("Ruler Guide", "Напрямна"),
     ("Find/Change…", "Знайти й замінити…"),
     ("Check Spelling…", "Перевірити орфографію…"),
     ("Preferences…", "Налаштування…"),

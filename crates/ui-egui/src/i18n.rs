@@ -318,6 +318,11 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("Duplicate", ["Duplizieren", "Dupliquer", "Duplicar", "複製", "重复"]),
     ("Select All", ["Alles auswählen", "Tout sélectionner", "Seleccionar todo", "すべてを選択", "全选"]),
     ("Deselect All", ["Auswahl aufheben", "Tout désélectionner", "Deseleccionar todo", "すべての選択を解除", "取消全选"]),
+    (
+        "Select All Guides",
+        ["Alle Hilfslinien auswählen", "Sélectionner tous les repères", "Seleccionar todas las guías", "すべてのガイドを選択", "选择所有参考线"],
+    ),
+    ("Ruler Guide", ["Hilfslinie", "Repère de règle", "Guía de regla", "定規ガイド", "标尺参考线"]),
     ("Find/Change…", ["Suchen/Ersetzen …", "Rechercher/Remplacer…", "Buscar/Cambiar…", "検索と置換…", "查找/更改…"]),
     ("Check Spelling…", ["Rechtschreibprüfung …", "Vérifier l'orthographe…", "Revisar ortografía…", "スペルチェック…", "拼写检查…"]),
     ("Preferences…", ["Voreinstellungen …", "Préférences…", "Preferencias…", "環境設定…", "首选项…"]),

@@ -147,6 +147,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Duplicate", "تكرار"),
     ("Select All", "تحديد الكل"),
     ("Deselect All", "إلغاء تحديد الكل"),
+    ("Select All Guides", "تحديد كل الأدلة"),
+    ("Ruler Guide", "دليل المسطرة"),
     ("Find/Change…", "البحث/التغيير…"),
     ("Find/Change", "البحث/التغيير"),
     ("Check Spelling…", "تدقيق إملائي…"),
