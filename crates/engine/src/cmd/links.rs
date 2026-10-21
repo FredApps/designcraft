@@ -350,7 +350,7 @@ fn list(d: &Document, cache: &Cache, document: Option<&Path>, checks: &mut TextC
                 .collect();
             let pdf_crop = (a.mime == "application/pdf").then(|| a.pdf_crop.name());
             let why = a.link.as_deref().and_then(|l| refused(l, document)).map(|r| r.to_string());
-            json!({"asset": a.id.0, "name": a.name, "path": a.link, "status": status(a, document), "refused": why, "pixels": a.pixels, "pdfCrop": pdf_crop, "uses": uses})
+            json!({"asset": a.id.0, "name": a.name, "path": a.link, "status": status(a, document), "refused": why, "pixels": a.pixels, "pdfCrop": pdf_crop, "mime": a.mime, "bytes": a.data.len(), "uses": uses})
         })
         .chain(texts)
         .collect()

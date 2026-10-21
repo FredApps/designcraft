@@ -36,6 +36,21 @@ pub const LANGUAGES: &[(&str, &str)] = &[
 
 /// English → [German, French, Spanish, Japanese, Simplified Chinese].
 const TABLE: &[(&str, [&str; 5])] = &[
+    ("{count} Selected", ["{count} ausgewählt", "{count} sélectionné(s)", "{count} seleccionado(s)", "{count} 個を選択", "已选择 {count} 个"]),
+    (
+        "Update All Links",
+        ["Alle Verknüpfungen aktualisieren", "Mettre à jour tous les liens", "Actualizar todos los vínculos", "すべてのリンクを更新", "更新所有链接"],
+    ),
+    (
+        "More Link Options",
+        ["Weitere Verknüpfungsoptionen", "Autres options de lien", "Más opciones de vínculo", "その他のリンクオプション", "更多链接选项"],
+    ),
+    ("Link Info", ["Verknüpfungsinformationen", "Informations sur le lien", "Información de vínculo", "リンク情報", "链接信息"]),
+    ("Next Link", ["Nächste Verknüpfung", "Lien suivant", "Vínculo siguiente", "次のリンク", "下一个链接"]),
+    ("Previous Link", ["Vorherige Verknüpfung", "Lien précédent", "Vínculo anterior", "前のリンク", "上一个链接"]),
+    ("Format", ["Format", "Format", "Formato", "形式", "格式"]),
+    ("Dimensions", ["Abmessungen", "Dimensions", "Dimensiones", "寸法", "尺寸"]),
+    ("Effective PPI", ["Effektive ppi", "ppi effectif", "PPI efectivo", "有効 ppi", "有效 PPI"]),
     // Menus.
     ("File", ["Datei", "Fichier", "Archivo", "ファイル", "文件"]),
     ("Edit", ["Bearbeiten", "Édition", "Edición", "編集", "编辑"]),
