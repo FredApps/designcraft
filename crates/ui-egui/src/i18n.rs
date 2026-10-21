@@ -4635,6 +4635,22 @@ mod tests {
     fn translates_known_strings_and_keeps_the_rest() {
         assert_eq!(tr("de", "File"), "Datei");
         assert_eq!(tr("ja", "Swatches"), "スウォッチ");
+        // Units: the Japanese interface names them; Q and H are the DTP units (級, 歯).
+        for (english, japanese) in [
+            ("Points", "ポイント"),
+            ("Picas", "パイカ"),
+            ("Inches", "インチ"),
+            ("Inches Decimal", "インチ（10 進）"),
+            ("Millimeters", "ミリメートル"),
+            ("Centimeters", "センチメートル"),
+            ("Ciceros", "シセロ"),
+            ("Agates", "アゲート"),
+            ("Pixels", "ピクセル"),
+            ("Q", "級"),
+            ("H", "歯"),
+        ] {
+            assert_eq!(tr("ja", english), japanese, "{english}");
+        }
         assert_eq!(tr("fr", "Something new"), "Something new");
         assert_eq!(tr("", "File"), "File");
         assert_eq!(tr("ar", "File"), "ملف");
