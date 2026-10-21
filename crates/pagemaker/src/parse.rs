@@ -110,6 +110,7 @@ pub fn parse(data: &[u8], version: Version, mac: bool) -> Result<PmDoc, PmError>
     let b = Bytes::new(data, !mac);
     let lay = Layout::of(version);
     let lists = records::index(&b);
+    let src = records::Source::new(b);
     if lists.is_empty() {
         return Err(PmError::Corrupt("the document's record index is missing or damaged".into()));
     }
@@ -119,7 +120,7 @@ pub fn parse(data: &[u8], version: Version, mac: bool) -> Result<PmDoc, PmError>
     // Pages: the document record holds the left and right pages' rectangles (the same one twice
     // when pages don't face), in twips about the spread's centre.
     let docrec =
-        first(kind::DOCUMENT).and_then(|l| l.records(&b, 128).first().copied()).ok_or_else(|| PmError::Corrupt("no document record".into()))?;
+        first(kind::DOCUMENT).and_then(|l| l.records(&src, 128).first().copied()).ok_or_else(|| PmError::Corrupt("no document record".into()))?;
     let d = Bytes::new(docrec, !mac);
     let rect = |at: usize| -> Option<[i16; 4]> { Some([d.i16(at)?, d.i16(at + 2)?, d.i16(at + 4)?, d.i16(at + 6)?]) };
     let left = rect(lay.page_rects).ok_or_else(|| PmError::Corrupt("no page size".into()))?;
@@ -144,7 +145,7 @@ pub fn parse(data: &[u8], version: Version, mac: bool) -> Result<PmDoc, PmError>
     let fonts: Vec<String> = lists
         .iter()
         .filter(|l| l.kind == kind::FONTS)
-        .flat_map(|l| l.records(&b, lay.font))
+        .flat_map(|l| l.records(&src, lay.font))
         .map(|r| bytes::name(r.get(..32).unwrap_or(r), mac))
         .collect();
 
@@ -157,23 +158,23 @@ pub fn parse(data: &[u8], version: Version, mac: bool) -> Result<PmDoc, PmError>
                 if let Some(g) = group.take() {
                     g.finish(&mut doc);
                 }
-                let heads = l.records(&b, 24).iter().filter_map(|r| story_head(r, mac)).collect();
+                let heads = l.records(&src, 24).iter().filter_map(|r| story_head(r, mac)).collect();
                 group = Some(Group { heads, ..Group::default() });
             }
             kind::TEXT => {
                 if let Some(g) = group.as_mut() {
-                    let raw = l.bytes(&b, 1);
+                    let raw = l.bytes(&src, MAX_STORY.saturating_sub(g.text.len()));
                     g.text.extend(raw.iter().take(MAX_STORY.saturating_sub(g.text.len())).map(|c| text_char(*c, mac)));
                 }
             }
             kind::CHAR_RUNS => {
                 if let Some(g) = group.as_mut() {
-                    g.chars.extend(l.records(&b, lay.char_run).iter().map(|r| char_run(r, mac, &fonts)));
+                    g.chars.extend(l.records(&src, lay.char_run).iter().map(|r| char_run(r, mac, &fonts)));
                 }
             }
             kind::PARA_RUNS => {
                 if let Some(g) = group.as_mut() {
-                    g.paras.extend(l.records(&b, lay.para_run).iter().map(|r| para_run(r, mac)));
+                    g.paras.extend(l.records(&src, lay.para_run).iter().map(|r| para_run(r, mac)));
                 }
             }
             _ => {}
@@ -192,19 +193,23 @@ pub fn parse(data: &[u8], version: Version, mac: bool) -> Result<PmDoc, PmError>
     doc.colors = lists
         .iter()
         .filter(|l| l.kind == kind::COLORS)
-        .flat_map(|l| l.records(&b, color_size))
+        .flat_map(|l| l.records(&src, color_size))
         .enumerate()
         .map(|(i, r)| color(r, i, modern, mac))
         .collect();
 
     // Embedded images, in chunks.
-    doc.images = lists.iter().filter(|l| l.kind == kind::IMAGE_DATA).filter_map(|l| crate::images::embedded(l.bytes(&b, 1))).collect();
+    doc.images = lists
+        .iter()
+        .filter(|l| l.kind == kind::IMAGE_DATA)
+        .filter_map(|l| crate::images::embedded(l.bytes(&src, crate::images::MAX_IMAGE.saturating_add(1))))
+        .collect();
 
     // Transforms: rotation in thousandths of a degree (counter-clockwise), the unrotated box, an id.
     let transforms: BTreeMap<u32, (f64, f64, f64)> = lists
         .iter()
         .filter(|l| l.kind == kind::TRANSFORMS)
-        .flat_map(|l| l.records(&b, 26))
+        .flat_map(|l| l.records(&src, 26))
         .filter_map(|r| {
             let t = Bytes::new(r, !mac);
             let (x0, y0, x1, y1) = (t.i16(10)?, t.i16(12)?, t.i16(14)?, t.i16(16)?);
@@ -221,7 +226,7 @@ pub fn parse(data: &[u8], version: Version, mac: bool) -> Result<PmDoc, PmError>
     let special = if version == Version::Pm65 { 2 } else { 1 };
     let top = f64::from(left[1]);
     for (i, l) in object_lists.iter().enumerate().skip(special) {
-        let objs = l.records(&b, lay.object).into_iter().filter_map(|r| object(r, &lay, mac, top, &transforms));
+        let objs = l.records(&src, lay.object).into_iter().filter_map(|r| object(r, &lay, mac, top, &transforms));
         if i < special + 2 {
             doc.masters.extend(objs);
         } else if doc.pages.len() < MAX_PAGES {

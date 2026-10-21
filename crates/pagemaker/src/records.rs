@@ -22,14 +22,17 @@ impl List {
         self.chunks.iter().map(|c| c.0).fold(0usize, usize::saturating_add)
     }
 
-    /// The records, `size` bytes each; a record that would run past the end stops the list.
-    pub fn records<'a>(&self, b: &Bytes<'a>, size: usize) -> Vec<&'a [u8]> {
+    /// The records, `size` bytes each; a record that would run past the end stops the list, and
+    /// so does the source's read budget.
+    pub fn records<'a>(&self, src: &Source<'a>, size: usize) -> Vec<&'a [u8]> {
+        let size = size.max(1);
         let mut out = Vec::new();
         for &(count, at) in &self.chunks {
-            // A count can't promise more records than the file holds.
-            let fits = b.len().saturating_sub(at) / size.max(1);
-            for k in 0..count.min(fits) {
-                match b.slice(at + k * size, size) {
+            // A count can't promise more records than the file holds after `at`.
+            let fits = src.b.len().saturating_sub(at) / size;
+            let n = src.take(count.min(fits).saturating_mul(size)) / size;
+            for k in 0..n {
+                match src.b.slice(at + k * size, size) {
                     Some(r) => out.push(r),
                     None => break,
                 }
@@ -38,9 +41,47 @@ impl List {
         out
     }
 
-    /// The bytes of the records, `size` each, joined (text records are 1 byte each).
-    pub fn bytes(&self, b: &Bytes<'_>, size: usize) -> Vec<u8> {
-        self.records(b, size).concat()
+    /// The chunks' bytes joined (text and embedded files, one byte a record), at most `max`, and
+    /// within the source's read budget.
+    pub fn bytes(&self, src: &Source<'_>, max: usize) -> Vec<u8> {
+        let mut out: Vec<u8> = Vec::new();
+        for &(count, at) in &self.chunks {
+            let room = max.saturating_sub(out.len());
+            let fits = src.b.len().saturating_sub(at);
+            let n = src.take(count.min(fits).min(room));
+            match src.b.slice(at, n) {
+                Some(chunk) => out.extend_from_slice(chunk),
+                None => break,
+            }
+            if out.len() >= max {
+                break;
+            }
+        }
+        out
+    }
+}
+
+/// The file's bytes and how much more may be read from them. Chunk references come from the file
+/// and may overlap or repeat, so without a budget a small hostile file could ask for gigabytes; every
+/// read takes from one allowance tied to the file's size.
+pub struct Source<'a> {
+    pub b: Bytes<'a>,
+    left: std::cell::Cell<usize>,
+}
+
+impl<'a> Source<'a> {
+    /// Up to four times the file (real files read each byte about once), plus a little, at most 1 GiB.
+    pub fn new(b: Bytes<'a>) -> Self {
+        let allowance = b.len().saturating_mul(4).saturating_add(1 << 20).min(1 << 30);
+        Source { b, left: std::cell::Cell::new(allowance) }
+    }
+
+    /// Take up to `want` bytes of the budget; how many were granted.
+    fn take(&self, want: usize) -> usize {
+        let left = self.left.get();
+        let granted = want.min(left);
+        self.left.set(left - granted);
+        granted
     }
 }
 
@@ -73,10 +114,14 @@ pub fn index(b: &Bytes<'_>) -> Vec<List> {
         0 => vec![(count, at)],
         _ => (0..count).filter_map(|k| Some((usize::from(b.u16(at + 10 * k + 2)?), b.u32(at + 10 * k + 4)? as usize))).collect(),
     };
+    // Entries and chunk references are read from the file, and block lists may name the same
+    // bytes again and again: no more of either than the file has room for.
+    let max_entries = MAX_ENTRIES.min(b.len() / 16 + 64);
+    let mut chunks_left = b.len() / 10 + 64;
     let mut out = Vec::new();
     for (n, start) in runs {
         for k in 0..n {
-            if out.len() >= MAX_ENTRIES {
+            if out.len() >= max_entries {
                 return out;
             }
             let Some(e) = start.checked_add(k.saturating_mul(16)) else { break };
@@ -89,7 +134,9 @@ pub fn index(b: &Bytes<'_>) -> Vec<List> {
                 continue;
             };
             if t == kind::GROUP && flag == 3 {
-                let chunks = (0..usize::from(c))
+                let take = usize::from(c).min(chunks_left);
+                chunks_left -= take;
+                let chunks = (0..take)
                     .filter_map(|j| {
                         let r = (p as usize).checked_add(10 * j)?;
                         (b.u8(r + 1)? == sub && b.slice(r + 8, 2)? == [0xFF, 0xFF]).then_some(())?;
@@ -104,4 +151,50 @@ pub fn index(b: &Bytes<'_>) -> Vec<List> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One group whose 65 535 chunk references all name the same 64 KB: before the read budget,
+    /// joining them asked for about 4 GB (and 68 GB of slices) and aborted the app.
+    #[test]
+    fn overlapping_chunks_stay_within_the_read_budget() {
+        let refs_at = 128usize;
+        let region = refs_at + 10 * 65_535;
+        let mut f = vec![0u8; region + 65_535];
+        f[6..8].copy_from_slice(&[0xFF, 0x99]);
+        // Index descriptor: one 16-byte entry at 64.
+        f[46..48].copy_from_slice(&1u16.to_le_bytes());
+        f[48..52].copy_from_slice(&64u32.to_le_bytes());
+        // A text group (subtype 0x0D) with 65 535 chunk references.
+        let e = 64;
+        f[e + 1] = kind::GROUP;
+        f[e + 2..e + 4].copy_from_slice(&u16::MAX.to_le_bytes());
+        f[e + 4..e + 8].copy_from_slice(&(refs_at as u32).to_le_bytes());
+        f[e + 8..e + 10].copy_from_slice(&[0xFF, 0xFF]);
+        f[e + 10] = 3;
+        f[e + 11] = kind::TEXT;
+        for j in 0..65_535 {
+            let r = refs_at + 10 * j;
+            f[r + 1] = kind::TEXT;
+            f[r + 2..r + 4].copy_from_slice(&u16::MAX.to_le_bytes());
+            f[r + 4..r + 8].copy_from_slice(&(region as u32).to_le_bytes());
+            f[r + 8..r + 10].copy_from_slice(&[0xFF, 0xFF]);
+        }
+        let b = Bytes::new(&f, true);
+        let lists = index(&b);
+        assert_eq!(lists.len(), 1);
+        assert_eq!(lists[0].chunks.len(), 65_535);
+        let budget = f.len() * 4 + (1 << 20);
+        let src = Source::new(b);
+        let text = lists[0].bytes(&src, usize::MAX);
+        assert!(text.len() <= budget, "{} bytes read from a {}-byte file", text.len(), f.len());
+        // The budget is spent: nothing more comes out, whatever is asked.
+        assert!(lists[0].records(&src, 1).is_empty());
+        assert!(lists[0].bytes(&src, usize::MAX).is_empty());
+        // A fresh source, a cap: no more than asked.
+        assert_eq!(lists[0].bytes(&Source::new(b), 1000).len(), 1000);
+    }
 }

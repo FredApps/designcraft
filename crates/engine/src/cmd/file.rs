@@ -41,7 +41,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"),
             "{path} — a DesignCraft or IDML file (recognised by its content, so the extension may be missing), an InDesign .indd/.indt (recognised by its signature or extension, converted to IDML; its conversion warnings join `warnings`), or a PageMaker 4–7 document (.pmd, .p65, .pm6, .pm5, .pm4 and templates, PC or Mac; by content or extension; what can't be imported yet is listed in `warnings`); the fonts in a `Document Fonts` folder beside it load first → {index, documentFonts: faces loaded, warnings: font files skipped, GREP styles whose pattern can't compile, Based on Parent links cleared and, for IDML and InDesign files, package parts missing}",
             always, file_open),
-        cmd!(noundo "file.openBytes", "Open Bytes", [], None, "{name, base64} — DesignCraft JSON, an IDML package or an InDesign .indd/.indt → {index, warnings}", always, file_open_bytes),
+        cmd!(noundo "file.openBytes", "Open Bytes", [], None, "{name, base64} — DesignCraft JSON, an IDML package, an InDesign .indd/.indt, or a PageMaker 4–7 document (.pmd, .p65, .pm6, .pm5, .pm4 and templates, PC or Mac; known by content, or by `name`) → {index, warnings} (IDML, InDesign and PageMaker also {documentFonts}; PageMaker also {format: the PageMaker version}; what a PageMaker file holds that can't be imported yet is listed in `warnings`)", always, file_open_bytes),
         cmd!(noundo "file.openRecent", "Open Recent File", [], None,
             "{index} — reopen entry `index` of File › Open Recent (as file.open); a file that is gone is an error and stays listed",
             has_recent, file_open_recent),
