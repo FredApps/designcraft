@@ -30,6 +30,11 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "カット"),
     ("Copy", "コピー"),
     ("Paste", "ペースト"),
+    ("Information", "情報"),
+    (
+        "Searched this relink directory, and found and relinked {count} missing links.",
+        "このフォルダーを検索し、見つからなかったリンクを {count} 個見つけて再リンクしました。",
+    ),
     ("{count} Selected", "{count} 個を選択"),
     ("Update All Links", "すべてのリンクを更新"),
     ("More Link Options", "その他のリンクオプション"),

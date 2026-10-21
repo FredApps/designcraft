@@ -29,6 +29,11 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "Wytnij"),
     ("Copy", "Kopiuj"),
     ("Paste", "Wklej"),
+    ("Information", "Informacje"),
+    (
+        "Searched this relink directory, and found and relinked {count} missing links.",
+        "Przeszukano ten folder: znaleziono i ponownie połączono {count} brakujących łączy.",
+    ),
     ("{count} Selected", "Zaznaczono: {count}"),
     ("Update All Links", "Uaktualnij wszystkie łącza"),
     ("More Link Options", "Więcej opcji łącza"),

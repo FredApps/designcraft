@@ -36,6 +36,17 @@ pub const LANGUAGES: &[(&str, &str)] = &[
 
 /// English → [German, French, Spanish, Japanese, Simplified Chinese].
 const TABLE: &[(&str, [&str; 5])] = &[
+    ("Information", ["Information", "Information", "Información", "情報", "信息"]),
+    (
+        "Searched this relink directory, and found and relinked {count} missing links.",
+        [
+            "Dieser Ordner wurde durchsucht; {count} fehlende Verknüpfungen wurden gefunden und neu verknüpft.",
+            "Ce dossier a été parcouru : {count} liens manquants ont été trouvés et rétablis.",
+            "Se buscó en esta carpeta y se encontraron y volvieron a vincular {count} vínculos que faltaban.",
+            "このフォルダーを検索し、見つからなかったリンクを {count} 個見つけて再リンクしました。",
+            "已搜索此文件夹，找到并重新链接了 {count} 个缺失的链接。",
+        ],
+    ),
     ("{count} Selected", ["{count} ausgewählt", "{count} sélectionné(s)", "{count} seleccionado(s)", "{count} 個を選択", "已选择 {count} 个"]),
     (
         "Update All Links",

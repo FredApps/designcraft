@@ -31,6 +31,11 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "Vyjmout"),
     ("Copy", "Kopírovat"),
     ("Paste", "Vložit"),
+    ("Information", "Informace"),
+    (
+        "Searched this relink directory, and found and relinked {count} missing links.",
+        "Tato složka byla prohledána: nalezeno a znovu propojeno {count} chybějících propojení.",
+    ),
     ("{count} Selected", "Vybráno: {count}"),
     ("Update All Links", "Aktualizovat všechna propojení"),
     ("More Link Options", "Další volby propojení"),

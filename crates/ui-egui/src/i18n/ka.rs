@@ -31,6 +31,11 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "ამოჭრა"),
     ("Copy", "კოპირება"),
     ("Paste", "ჩასმა"),
+    ("Information", "ინფორმაცია"),
+    (
+        "Searched this relink directory, and found and relinked {count} missing links.",
+        "ეს საქაღალდე გადამოწმდა: ნაპოვნია და ხელახლა დაკავშირდა {count} დაკარგული ბმული.",
+    ),
     ("{count} Selected", "არჩეულია {count}"),
     ("Update All Links", "ყველა ბმულის განახლება"),
     ("More Link Options", "ბმულის სხვა პარამეტრები"),

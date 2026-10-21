@@ -30,6 +30,11 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "قص"),
     ("Copy", "نسخ"),
     ("Paste", "لصق"),
+    ("Information", "معلومات"),
+    (
+        "Searched this relink directory, and found and relinked {count} missing links.",
+        "تم البحث في هذا المجلد، وعُثر على {count} من الارتباطات المفقودة وأُعيد ربطها.",
+    ),
     ("{count} Selected", "{count} محدد"),
     ("Update All Links", "تحديث كل الارتباطات"),
     ("More Link Options", "خيارات ارتباط إضافية"),

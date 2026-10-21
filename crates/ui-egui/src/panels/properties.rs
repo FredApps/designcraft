@@ -2511,7 +2511,12 @@ pub fn links_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
                 if let Some(path) = app.services.pick_open.as_mut().and_then(|pick| pick("relink")) {
                     let mut p = target.clone();
                     p["path"] = json!(path);
-                    let _ = app.run("links.relink", p);
+                    // As InDesign's Search for Missing Links in This Folder: the other missing
+                    // links are looked for in the folder the new file came from.
+                    let others_missing = rows.iter().any(|r| row_id(r) != aid && r["status"] == "missing");
+                    if app.run("links.relink", p).is_ok() && others_missing {
+                        relink_missing_from_folder(app, &path);
+                    }
                 }
             }
             "goTo" => {
@@ -2614,6 +2619,18 @@ pub fn links_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
             ui.add(egui::Label::new(egui::RichText::new(path).color(t.text_dim).size(11.0)).wrap());
         });
     }
+}
+
+/// After a Relink, look for the other missing links, by name, in the folder the new file came
+/// from, and say how many were found, as InDesign does with Search for Missing Links in This
+/// Folder.
+fn relink_missing_from_folder(app: &mut DesignApp, picked: &str) {
+    let Some(dir) = std::path::Path::new(picked).parent() else { return };
+    let Ok(v) = app.run("links.relinkFolder", json!({"dir": dir.to_string_lossy()})) else { return };
+    let n = v["relinked"].as_u64().unwrap_or(0);
+    let message = crate::i18n::tr(&app.ui.language, "Searched this relink directory, and found and relinked {count} missing links.")
+        .replace("{count}", &n.to_string());
+    app.ui.dialog = Some(crate::dialogs::Dialog::new("alert", json!({"title": "Information", "message": message})));
 }
 
 /// `text` shortened in the middle to fit `max` points, as InDesign's Links panel shows long
@@ -3272,6 +3289,41 @@ mod tests {
         h.get_by_label("Next Link").click();
         h.run_steps(3);
         assert!(h.query_by_label("/project/a/second.svg").is_some(), "▶ goes to the next link");
+    }
+
+    /// Relinking one of several missing pictures finds the others in the same folder, as
+    /// InDesign's Search for Missing Links in This Folder, and says how many it relinked.
+    #[test]
+    fn relinking_a_missing_link_finds_the_others_in_its_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let (old, new) = (dir.path().join("old"), dir.path().join("moved"));
+        std::fs::create_dir_all(&old).unwrap();
+        let png = designcraft_render::Rendered { width: 8, height: 8, pixels: vec![120; 8 * 8 * 4] }.to_png();
+        let picked = new.join("a.png").to_string_lossy().to_string();
+        let services = crate::Services { pick_open: Some(Box::new(move |_| Some(picked.clone()))), ..Default::default() };
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), services);
+        app.run("file.new", json!({})).unwrap();
+        for (k, name) in ["a.png", "b.png", "c.png"].iter().enumerate() {
+            std::fs::write(old.join(name), &png).unwrap();
+            let x = 72 + 120 * k as u64;
+            let f = app.run("frame.create", json!({"rect": [x, 72, x + 100, 172]})).unwrap()["id"].as_u64().unwrap();
+            app.run("file.place", json!({"path": old.join(name).to_string_lossy(), "frame": f})).unwrap();
+        }
+        // The folder moves: all three links go missing.
+        std::fs::rename(&old, &new).unwrap();
+        let mut h = links_harness(app, 320.0);
+        assert_eq!(h.get_all_by_label("Missing").count(), 3);
+        h.get_by_label("a.png").click();
+        h.run_steps(3);
+        h.get_by_label("Relink…").click();
+        h.run_steps(3);
+        let st = h.state().session.active().unwrap();
+        for a in st.doc.assets.values() {
+            let link = a.link.clone().unwrap_or_default();
+            assert!(link.contains("moved"), "{} relinked to the new folder: {link}", a.name);
+        }
+        let d = h.state().ui.dialog.clone().expect("an alert says how many were found");
+        assert!(d.s("message").contains("relinked 2 missing links"), "{}", d.s("message"));
     }
 
     /// Long names are shortened in the middle, keeping the start and the extension.
