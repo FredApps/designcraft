@@ -45,7 +45,12 @@ pub enum ObjKind {
         story: u32,
         block: u32,
     },
-    Line,
+    /// A line from `a` to `b` (spread space, as `Obj::rect`), `weight` points wide when known.
+    Line {
+        a: (f64, f64),
+        b: (f64, f64),
+        weight: Option<f64>,
+    },
     Box,
     Oval,
     /// A placed graphic (image, EPS, metafile), with the pixel size of its image when it is one.
@@ -97,6 +102,12 @@ pub struct CharRun {
 pub struct ParaRun {
     pub len: usize,
     pub align: Align,
+    /// Points: left, first-line and right indents, space before and after.
+    pub left: f64,
+    pub first: f64,
+    pub right: f64,
+    pub before: f64,
+    pub after: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

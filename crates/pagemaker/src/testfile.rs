@@ -151,13 +151,18 @@ pub fn sample(f: Fam, le: bool) -> Vec<u8> {
     };
     let runs = [run(&w, 6, 0, 180, 1, black + 1), run(&w, 6, 1, 100, 0, black)];
     w.list(0x1C, &runs);
-    let para = |w: &Writer, len: u16, align: u8| {
+    // Paragraphs: centred with a 36 pt left indent, an 18 pt first-line indent and 6 pt before;
+    // then plain.
+    let para = |w: &Writer, len: u16, align: u8, indents: [u16; 5]| {
         let mut r = vec![0u8; f.para_run];
         Writer::put(&mut r, 0, &w.u16(len));
         r[3] = align;
+        for (k, v) in indents.iter().enumerate() {
+            Writer::put(&mut r, 10 + 2 * k, &w.u16(*v));
+        }
         r
     };
-    let paras = [para(&w, 6, 2), para(&w, 6, 0)];
+    let paras = [para(&w, 6, 2, [720, 360, 0, 120, 0]), para(&w, 6, 0, [0; 5])];
     w.list(0x0B, &paras);
     // Objects: one list off the pages (two from PageMaker 6.5), the left and right masters, page
     // 1 (right) and page 2 (left); positions are from the spine.
@@ -176,7 +181,13 @@ pub fn sample(f: Fam, le: bool) -> Vec<u8> {
         w.list(0x19, &[]);
     }
     w.list(0x19, &[]);
-    let line = obj(&w, 3, [1440, -7200, 10800, -7180], None);
+    // A 2 pt line across the right master, 36 pt from the top (weights from PageMaker 5).
+    let mut line = obj(&w, 3, [1440, -7200, 10800, -7180], None);
+    let ends = if f.code == 0x0203 { 30 } else { 40 };
+    Writer::put(&mut line, ends, &w.i16s([1440, -7190, 10800, -7190]));
+    if f.code != 0x0203 {
+        line[35] = 20;
+    }
     w.list(0x19, &[line]);
     let p1 = [obj(&w, 1, [1440, -6480, 7200, -5040], Some((1, 7))), obj(&w, 4, [1440, 0, 4320, 2880], None)];
     w.list(0x19, &p1);

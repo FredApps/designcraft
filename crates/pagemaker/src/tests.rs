@@ -33,14 +33,22 @@ fn check_sample(im: &Imported) {
     assert_eq!(world.over.font_family.as_deref(), Some("Times"));
     assert_eq!(world.over.size, Some(10.0));
     assert_eq!(world.over.fill.as_deref(), Some(designcraft_color::swatch::BLACK));
-    assert_eq!(st.paras[0].para.align, Some(designcraft_doc::Align::Center));
+    let p = &st.paras[0].para;
+    assert_eq!(p.align, Some(designcraft_doc::Align::Center));
+    assert_eq!((p.left_indent, p.first_line_indent, p.space_before, p.right_indent), (Some(36.0), Some(18.0), Some(6.0), None));
+    assert_eq!(st.paras[1].para.left_indent, None);
     // The first frame sits 72 pt in on page 1 (a right page), 72 pt down.
     let f = d.item(st.frames[0]).unwrap().bounds();
     let p1 = d.page_loc(0).and_then(|(si, pi)| d.spreads[si].pages.get(pi)).unwrap().bounds();
     assert!((f.x0 - p1.x0 - 72.0).abs() < 1e-6 && (f.y0 - 72.0).abs() < 1e-6, "{f:?} on {p1:?}");
     // The box on page 1, the line on the right master.
     assert!(d.spreads.iter().flat_map(|s| s.items.iter()).any(|i| i.shape == designcraft_doc::Shape::Rectangle && i.text_frame().is_none()));
-    assert!(d.parents[0].items.iter().any(|i| i.shape == designcraft_doc::Shape::GraphicLine));
+    let line = d.parents[0].items.iter().find(|i| i.shape == designcraft_doc::Shape::GraphicLine).expect("the master's line");
+    let lb = line.bounds();
+    assert!((lb.y0 - 36.5).abs() < 1e-6 && (lb.y1 - 36.5).abs() < 1e-6, "horizontal, from its end points: {lb:?}");
+    assert!((lb.width() - 468.0).abs() < 1e-6, "{lb:?}");
+    let weight = line.stroke.weight;
+    assert!(weight == 1.0 || weight == 2.0, "{weight}");
 }
 
 #[test]

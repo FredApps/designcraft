@@ -54,15 +54,10 @@ pub fn build(pm: &PmDoc) -> Result<(Document, Vec<String>), PmError> {
                 blocks.entry(story).or_default().push((block, r, rect, xf));
                 return Ok(());
             }
-            ObjKind::Line => {
-                let (a, b) = if rect.width() >= rect.height() {
-                    let y = (rect.y0 + rect.y1) / 2.0;
-                    (Point::new(rect.x0, y), Point::new(rect.x1, y))
-                } else {
-                    let x = (rect.x0 + rect.x1) / 2.0;
-                    (Point::new(x, rect.y0), Point::new(x, rect.y1))
-                };
-                (Shape::GraphicLine, shapes::line(a, b), Stroke::default())
+            ObjKind::Line { a, b, weight } => {
+                let at = |p: (f64, f64)| Point::new(origin.0 + p.0, origin.1 + p.1);
+                let stroke = Stroke { weight: weight.unwrap_or(1.0), ..Stroke::default() };
+                (Shape::GraphicLine, shapes::line(at(a), at(b)), stroke)
             }
             ObjKind::Box => (Shape::Rectangle, shapes::rectangle(rect), Stroke::default()),
             ObjKind::Oval => (Shape::Oval, shapes::ellipse(rect), Stroke::default()),
@@ -284,12 +279,24 @@ fn format_story(story: &mut designcraft_doc::Story, st: &PmStory, swatches: &[Op
     let mut ranges = Vec::new();
     for run in &st.paras {
         let end = pos.saturating_add(run.len);
-        ranges.push((byte(pos), byte(end.saturating_sub(1)).max(byte(pos)), run.align));
+        ranges.push((byte(pos), byte(end.saturating_sub(1)).max(byte(pos)), run.clone()));
         pos = end;
     }
-    for (a, b, align) in ranges {
+    for (a, b, run) in ranges {
         story.format_paras(a..b, |pf| {
-            pf.para.align = Some(match align {
+            let p = &mut pf.para;
+            for (v, field) in [
+                (run.left, &mut p.left_indent),
+                (run.first, &mut p.first_line_indent),
+                (run.right, &mut p.right_indent),
+                (run.before, &mut p.space_before),
+                (run.after, &mut p.space_after),
+            ] {
+                if v != 0.0 {
+                    *field = Some(v);
+                }
+            }
+            p.align = Some(match run.align {
                 Align::Left => DcAlign::Left,
                 Align::Center => DcAlign::Center,
                 Align::Right => DcAlign::Right,

@@ -36,6 +36,10 @@ struct Layout {
     transform: Option<usize>,
     /// Offset of a graphic's image size in pixels.
     pixels: usize,
+    /// Offset of a line's two end points.
+    line_ends: usize,
+    /// Offset of a line's weight in tenths of a point, when the version has one.
+    line_weight: Option<usize>,
 }
 
 impl Layout {
@@ -52,6 +56,8 @@ impl Layout {
                 margin_box: Some(56),
                 transform: None,
                 pixels: 38,
+                line_ends: 30,
+                line_weight: None,
             },
             Version::Pm5 => Layout {
                 object: 78,
@@ -64,6 +70,8 @@ impl Layout {
                 margin_box: Some(58),
                 transform: Some(28),
                 pixels: 44,
+                line_ends: 40,
+                line_weight: Some(35),
             },
             Version::Pm6 => Layout {
                 object: 136,
@@ -76,6 +84,8 @@ impl Layout {
                 margin_box: None,
                 transform: Some(28),
                 pixels: 44,
+                line_ends: 40,
+                line_weight: Some(35),
             },
             _ => Layout {
                 object: 258,
@@ -88,6 +98,8 @@ impl Layout {
                 margin_box: None,
                 transform: Some(28),
                 pixels: 44,
+                line_ends: 40,
+                line_weight: Some(35),
             },
         }
     }
@@ -334,8 +346,15 @@ fn char_run(r: &[u8], mac: bool, fonts: &[String]) -> CharRun {
 
 fn para_run(r: &[u8], mac: bool) -> ParaRun {
     let b = Bytes::new(r, !mac);
+    // Indents and spacing in twips; a value beyond a page width is damage, and counts as none.
+    let twips = |at: usize| b.i16(at).map(f64::from).filter(|v| v.abs() <= 15_840.0).map_or(0.0, |v| v / TWIPS);
     ParaRun {
         len: usize::from(b.u16(0).unwrap_or(0)),
+        left: twips(10),
+        first: twips(12),
+        right: twips(14),
+        before: twips(16),
+        after: twips(18),
         align: match b.u8(3) {
             Some(1) => Align::Right,
             Some(2) => Align::Center,
@@ -355,7 +374,18 @@ fn object(r: &[u8], lay: &Layout, mac: bool, top: f64, transforms: &BTreeMap<u32
     let rect = [x0.min(x1) / TWIPS, (y0.min(y1) - top) / TWIPS, x0.max(x1) / TWIPS, (y0.max(y1) - top) / TWIPS];
     let kind = match t {
         1 => ObjKind::Text { block: b.u32(lay.block_id)?, story: b.u32(lay.block_id + 4)? },
-        3 => ObjKind::Line,
+        3 => {
+            // The end points, in twips like the bounds; the bounds' diagonal when they are damaged.
+            let ends = [b.i16(lay.line_ends), b.i16(lay.line_ends + 2), b.i16(lay.line_ends + 4), b.i16(lay.line_ends + 6)];
+            let [ax, ay, bx, by] = match ends {
+                [Some(ax), Some(ay), Some(bx), Some(by)] => [ax, ay, bx, by].map(f64::from),
+                _ => [x0, y0, x1, y1],
+            };
+            let inside = |x: f64, y: f64| x >= x0.min(x1) - 1.0 && x <= x0.max(x1) + 1.0 && y >= y0.min(y1) - 1.0 && y <= y0.max(y1) + 1.0;
+            let [ax, ay, bx, by] = if inside(ax, ay) && inside(bx, by) { [ax, ay, bx, by] } else { [x0, y0, x1, y1] };
+            let weight = lay.line_weight.and_then(|at| b.u8(at)).filter(|w| *w > 0).map(|w| f64::from(w) / 10.0);
+            ObjKind::Line { a: (ax / TWIPS, (ay - top) / TWIPS), b: (bx / TWIPS, (by - top) / TWIPS), weight }
+        }
         4 => ObjKind::Box,
         5 => ObjKind::Oval,
         6 => ObjKind::Graphic { pixels: Some((u32::from(b.u16(lay.pixels)?), u32::from(b.u16(lay.pixels + 2)?))).filter(|(w, h)| *w > 0 && *h > 0) },
