@@ -381,7 +381,7 @@ impl<'a> Ex<'a> {
                 .attr("Locked", bool_s(l.locked))
                 .attr("IgnoreWrap", bool_s(l.suppress_wrap_when_hidden))
                 .attr("ShowGuides", bool_s(l.show_guides))
-                .attr("LockGuides", "false")
+                .attr("LockGuides", bool_s(l.lock_guides))
                 .attr("UI", "true")
                 .attr("Expendable", "true")
                 .attr("Printable", bool_s(l.printable));
