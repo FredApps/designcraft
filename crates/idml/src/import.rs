@@ -1939,7 +1939,12 @@ impl<'r> Importer<'r> {
         // A style or range can set some of a rule's settings (such as only its colour); the others
         // come from its paragraph style chain, so the rule is whole.
         let fields = ["", "LineWeight", "Color", "Tint", "Width", "Offset", "LeftIndent", "RightIndent"];
-        if !fields.iter().any(|f| e.prop(&format!("{k}{f}")).is_some()) {
+        // Any of them, or of the type, gap and Keep In Frame settings, makes it an override (the
+        // rest then come from the style chain, or the defaults: off, 1 pt).
+        let more = ["Type", "GapColor", "GapTint"];
+        let own = fields.iter().chain(&more).any(|f| e.prop(&format!("{k}{f}")).is_some())
+            || (k == "RuleAbove" && e.prop("KeepRuleAboveInFrame").is_some());
+        if !own {
             return None;
         }
         let v: Vec<Option<String>> = fields.iter().map(|f| self.para_setting(e, &format!("{k}{f}"))).collect();
@@ -1947,7 +1952,6 @@ impl<'r> Importer<'r> {
         let num = |i: usize| get(i).and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite());
         let on = get(0).map(|v| v.trim() == "true");
         let weight = num(1);
-        on.or(weight.map(|_| false))?;
         let mut r = Rule { on: on.unwrap_or(false), ..Rule::default() };
         if let Some(w) = weight {
             r.weight = w;
@@ -1959,6 +1963,19 @@ impl<'r> Importer<'r> {
         r.offset = num(5).unwrap_or(0.0);
         r.left_indent = num(6).unwrap_or(0.0);
         r.right_indent = num(7).unwrap_or(0.0);
+        // Type, gap colour and tint, Keep In Frame (rule above).
+        if let Some(t) = self.para_setting(e, &format!("{k}Type")) {
+            r.kind = names::stroke_type_in(t.trim());
+        }
+        if let Some(c) = self.para_setting(e, &format!("{k}GapColor")).filter(|c| c.contains('/')) {
+            r.gap_color = self.swatch_ref(c.trim());
+        }
+        if let Some(t) = tint(self.para_setting(e, &format!("{k}GapTint")).and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite())) {
+            r.gap_tint = t;
+        }
+        if k == "RuleAbove" {
+            r.keep_in_frame = self.para_setting(e, "KeepRuleAboveInFrame").is_some_and(|v| v.trim() == "true");
+        }
         if let Some(c) = get(2) {
             let c = c.trim();
             if c == designcraft_doc::TEXT_COLOR {

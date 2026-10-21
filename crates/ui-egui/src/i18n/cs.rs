@@ -31,6 +31,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "Vyjmout"),
     ("Copy", "Kopírovat"),
     ("Paste", "Vložit"),
+    ("Keep In Frame", "Zachovat v rámečku"),
+    ("Gap Tint:", "Odstín mezery:"),
     ("Reverse Path", "Obrátit cestu"),
     ("Set Anchor", "Nastavit kotvu"),
     ("Clear", "Vymazat"),

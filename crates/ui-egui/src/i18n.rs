@@ -36,6 +36,7 @@ pub const LANGUAGES: &[(&str, &str)] = &[
 
 /// English → [German, French, Spanish, Japanese, Simplified Chinese].
 const TABLE: &[(&str, [&str; 5])] = &[
+    ("Keep In Frame", ["Im Rahmen behalten", "Conserver dans le bloc", "Mantener en el marco", "フレーム内に保持", "保持在框架内"]),
     // Menus.
     ("File", ["Datei", "Fichier", "Archivo", "ファイル", "文件"]),
     ("Edit", ["Bearbeiten", "Édition", "Edición", "編集", "编辑"]),

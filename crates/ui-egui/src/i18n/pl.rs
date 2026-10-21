@@ -29,6 +29,8 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "Wytnij"),
     ("Copy", "Kopiuj"),
     ("Paste", "Wklej"),
+    ("Keep In Frame", "Zachowaj w ramce"),
+    ("Gap Tint:", "Odcień odstępu:"),
     ("Clear", "Wyczyść"),
     ("Duplicate", "Powiel"),
     ("Select All", "Zaznacz wszystko"),
