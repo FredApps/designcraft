@@ -162,7 +162,7 @@ fn build_line(db: &FontDb, cs: &ComposedStory, l: &Line, vertical: bool) -> Line
     let mut strikes: Vec<(String, f32, Rect)> = Vec::new();
     let mut glyphs = 0;
     for g in &l.glyphs {
-        if !g.visible {
+        if !g.spans_rules() {
             continue;
         }
         let style = &cs.styles[g.style as usize];
@@ -184,6 +184,10 @@ fn build_line(db: &FontDb, cs: &ComposedStory, l: &Line, vertical: bool) -> Line
                     _ => bars.push((rule.color.clone(), rule.tint, r)),
                 }
             }
+        }
+        // A tab carries the rule across its width but draws nothing itself.
+        if !g.visible {
+            continue;
         }
         let outline = db.outline(&g.face, g.gid);
         if outline.elements().is_empty() {
@@ -723,5 +727,47 @@ mod cache_identity_tests {
         origin.clear();
         drop(cs);
         assert_eq!(glyphs.lines[0].runs, runs);
+    }
+}
+
+#[cfg(test)]
+mod rule_tests {
+    use super::*;
+
+    /// A tab is not drawn, but it is a character with an advance, and InDesign underlines it:
+    /// forms rule their fill-in lines with underlined tabs (`Name ⇥⇥⇥⇥, city ⇥⇥⇥⇥`). The bars
+    /// stopped at the last letter before each tab, so an imported form lost every writing line
+    /// (#1466).
+    #[test]
+    fn an_underline_runs_across_a_tab() {
+        let mut doc = designcraft_doc::Document::new(&Default::default());
+        for style in &mut doc.styles_mut().paragraph {
+            style.chars.underline = Some(true);
+        }
+        let layer = doc.default_layer();
+        let (_, sid) = doc
+            .add_text_frame(
+                designcraft_doc::SpreadRef::Doc(0),
+                Rect::new(36.0, 36.0, 400.0, 300.0),
+                layer,
+                "Name\tCity",
+                designcraft_doc::ParaFormat::default(),
+            )
+            .unwrap();
+        let owner = crate::Cache::new();
+        let cs = owner.get(&doc, sid, None);
+        let line = &cs.frames[0].lines[0];
+        let tab = line.glyphs.iter().find(|g| g.rendered_char == '\t').expect("the tab is placed on the line");
+        assert!(!tab.visible, "a tab draws nothing itself");
+        assert!(tab.adv > 1.0, "it advances to its stop: {}", tab.adv);
+
+        let mut cache = GlyphCache::default();
+        cache.tick();
+        let glyphs = cache.get(&cs, &cs.frames[0]);
+        let bars = &glyphs.lines[0].underlines;
+        assert_eq!(bars.len(), 1, "one bar across the line, not one before the tab and one after: {bars:?}");
+        let bar = bars[0].2;
+        assert!(bar.x0 <= tab.x + 0.5, "the bar starts at the text, not at the tab: {bar:?}");
+        assert!(bar.x1 >= tab.x + tab.adv - 0.5, "the bar covers the tab's width: {bar:?}, tab {} + {}", tab.x, tab.adv);
     }
 }

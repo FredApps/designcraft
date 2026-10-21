@@ -165,6 +165,20 @@ pub struct PlacedGlyph {
 }
 
 impl PlacedGlyph {
+    /// Whether an underline or a strikethrough runs across this glyph.
+    ///
+    /// A tab is not drawn, but it is a character with an advance, and the rule runs across its
+    /// whole width as InDesign draws it: forms rule their fill-in lines with underlined tabs, and
+    /// without this they lost every writing line (#1466). The spaces a line break trimmed off the
+    /// end, the break characters themselves and the markers' carriers are not part of the line's
+    /// text and are not spanned.
+    pub fn spans_rules(&self) -> bool {
+        if self.visible {
+            return true;
+        }
+        self.adv > 0.0 && matches!(self.rendered_char, '\t' | designcraft_doc::story::RIGHT_INDENT_TAB)
+    }
+
     /// In a vertical frame, the turn that sets this glyph upright, applied after drawing it at `x`
     /// on `baseline`: it hangs from its vertical origin ([`designcraft_fonts::FontFace::v_origin`],
     /// centred across) at `x` on the line's centre, the middle of the font's em box; a tate-chu-yoko
