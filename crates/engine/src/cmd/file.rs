@@ -2012,7 +2012,7 @@ mod extension_tests {
         std::fs::write(&notes, b"plain text").unwrap();
         assert!(!is_document(b"plain text"));
         let e = t.execute("file.open", &json!({"path": notes.to_string_lossy()})).unwrap_err();
-        assert!(e.to_string().contains("not a DesignCraft or IDML file"), "{e}");
+        assert!(e.to_string().contains("not a DesignCraft, IDML, InDesign or PageMaker file"), "{e}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
