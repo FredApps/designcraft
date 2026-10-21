@@ -3268,6 +3268,14 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
         }
         "pdfImport" => {
             let crop = d.s("crop");
+            if !d.s("page").trim().is_empty() && d.n("page").is_none() {
+                // A range or list ("4-5", "2,5") is not a page number: refuse it rather than place page 1.
+                let e = "Enter a single page number; one page is placed at a time".to_string();
+                let mut d = d;
+                d.fields.insert("status".into(), json!(e));
+                app.ui.dialog = Some(d);
+                return Err(e);
+            }
             if d.b("async") {
                 return app.confirm_pdf_import(d.n("page").unwrap_or(1.0).max(1.0) as u64, if crop.is_empty() { "crop".into() } else { crop });
             }

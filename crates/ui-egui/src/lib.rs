@@ -2952,6 +2952,19 @@ mod browser_import_tests {
     }
 
     #[test]
+    fn pdf_options_refuse_a_page_range_instead_of_placing_page_one() {
+        for spec in ["4-5", "2,5", "2-3"] {
+            let mut app = app();
+            let request = app.import_request("place");
+            deliver(&mut app, request, "three.pdf", pdf());
+            app.ui.dialog.as_mut().unwrap().fields.insert("page".into(), json!(spec));
+            assert!(dialogs::confirm(&mut app).is_err(), "{spec}");
+            assert!(app.session.doc().unwrap().doc.assets.is_empty(), "{spec}");
+            assert_eq!(app.ui.dialog.as_ref().unwrap().id, "pdfImport", "{spec}");
+        }
+    }
+
+    #[test]
     fn place_loads_the_cursor_unless_a_frame_can_take_the_graphic() {
         let mut app = app();
         let items = |app: &DesignApp| app.session.doc().unwrap().doc.spreads[0].items.len();
