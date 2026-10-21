@@ -34,6 +34,16 @@ pub const LANGUAGES: &[(&str, &str)] = &[
     ("ka", "ქართული"),
 ];
 
+/// The interface languages in the order the Preferences picker lists them: English first (the
+/// source language), then the rest by their own name with accents folded, so Čeština sits under
+/// C. Names in other scripts follow the Latin ones in code point order: Cyrillic, Arabic,
+/// Georgian, then the CJK languages.
+pub fn picker_languages() -> Vec<(&'static str, &'static str)> {
+    let mut rest: Vec<(&str, &str)> = LANGUAGES.iter().copied().filter(|(code, _)| !code.is_empty()).collect();
+    rest.sort_by_cached_key(|(_, name)| name_sort_key(name));
+    std::iter::once(LANGUAGES[0]).chain(rest).collect()
+}
+
 /// English → [German, French, Spanish, Japanese, Simplified Chinese].
 const TABLE: &[(&str, [&str; 5])] = &[
     // Menus.
@@ -5131,5 +5141,44 @@ mod tests {
                 assert_ne!(tr(code, key), key, "{code}: {key}");
             }
         }
+    }
+}
+
+/// `name` lowercased with the Latin accents that occur in language names folded away, so a
+/// byte-wise sort reads alphabetically. Other scripts are left as they are.
+fn name_sort_key(name: &str) -> String {
+    name.chars()
+        .flat_map(char::to_lowercase)
+        .map(|c| match c {
+            'à'..='å' | 'ā' | 'ă' | 'ą' => 'a',
+            'ç' | 'ć' | 'č' => 'c',
+            'è'..='ë' | 'ē' | 'ě' | 'ę' | 'ế' | 'ệ' => 'e',
+            'ì'..='ï' | 'ī' => 'i',
+            'ñ' | 'ń' | 'ň' => 'n',
+            'ò'..='ö' | 'ø' | 'ő' => 'o',
+            'ś' | 'š' => 's',
+            'ù'..='ü' | 'ū' | 'ů' | 'ű' => 'u',
+            'ý' | 'ÿ' => 'y',
+            'ź' | 'ż' | 'ž' => 'z',
+            c => c,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod picker_order_tests {
+    use super::*;
+
+    #[test]
+    fn picker_lists_english_first_then_names_alphabetically() {
+        let order = picker_languages();
+        assert_eq!(order.first(), Some(&("", "English")));
+        assert_eq!(order.len(), LANGUAGES.len());
+        let keys: Vec<String> = order[1..].iter().map(|(_, name)| name_sort_key(name)).collect();
+        assert!(keys.windows(2).all(|w| w[0] <= w[1]), "{keys:?}");
+        let pos = |code: &str| order.iter().position(|(c, _)| *c == code).unwrap_or(usize::MAX);
+        assert!(pos("cs") < pos("de"), "Čeština sorts under C");
+        assert!(pos("pl") < pos("ru"), "Latin names come before Cyrillic");
+        assert!(pos("ru") < pos("ja"), "Cyrillic names come before CJK");
     }
 }
