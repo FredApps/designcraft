@@ -2082,7 +2082,7 @@ fn export_bytes(app: &mut DesignApp, p: &Value, ext: &str, cmd: &str) -> Result<
         None => designcraft_engine::cmd::base64_decode(r["base64"].as_str().unwrap_or_default()),
     };
     match app.services.write.as_mut() {
-        Some(w) => w(&path, &bytes).map(|_| json!({"path": path, "bytes": bytes.len()})),
+        Some(w) => w(&path, &bytes).map(|_| json!({"path": path, "bytes": bytes.len(), "warnings": r["warnings"]})),
         None => Err("no writer".into()),
     }
 }
@@ -3553,6 +3553,28 @@ mod tests {
         assert_eq!(export_params("file.exportPptx", "/tmp/x.pptx", &json!({"embedFonts": false})), json!({"embedFonts": false}));
         // The text export's format still comes from the resolved path.
         assert_eq!(export_params("file.exportText", "/tmp/x.txt", &json!({})), json!({"format": "txt"}));
+    }
+
+    #[test]
+    fn powerpoint_export_keeps_the_warnings_for_the_caller() {
+        // `file.exportPptx` reports warnings (objects drawn without their blend mode, effects
+        // PowerPoint has no objects for); the UI command writes the file itself, so it must pass
+        // them on rather than drop them.
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        let frame = app.run("frame.create", json!({"rect": [36, 36, 300, 200]})).unwrap();
+        app.run("selection.set", json!({"ids": [frame["id"]]})).unwrap();
+        app.run("object.opacity", json!({"opacity": 1.0, "blend": "multiply"})).unwrap();
+        let written = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = written.clone();
+        app.services.write = Some(Box::new(move |_, bytes: &[u8]| {
+            sink.lock().unwrap().extend_from_slice(bytes);
+            Ok(())
+        }));
+        let r = run_ui(&mut app, "app.exportPptx", &json!({"path": "/tmp/warnings.pptx"})).unwrap().unwrap();
+        let warnings = r["warnings"].as_array().expect("the engine's warnings reach the caller");
+        assert!(warnings.iter().any(|w| w.as_str().is_some_and(|w| w.contains("blend modes"))), "the blend-mode warning is kept: {r}");
+        assert!(!written.lock().unwrap().is_empty(), "the file is still written");
     }
 
     #[test]
