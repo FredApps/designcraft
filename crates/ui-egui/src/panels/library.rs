@@ -33,7 +33,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     ui.separator();
     ui.horizontal(|ui| {
         if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "New Library…"))).clicked() {
-            let path = app.services.pick_save.as_mut().and_then(|f| f("Library.dclib"));
+            let path = app.pick_save("Library.dclib");
             let _ = app.run("library.new", json!({"path": path}));
         }
         if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Open…"))).clicked()
@@ -90,7 +90,7 @@ pub fn book(app: &mut DesignApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     ui.horizontal(|ui| {
         if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "New Book…"))).clicked()
-            && let Some(path) = app.services.pick_save.as_mut().and_then(|f| f("Book.dcbook"))
+            && let Some(path) = app.pick_save("Book.dcbook")
             && let Err(e) = app.run("book.new", json!({"path": path}))
         {
             app.status_error("Book", e);
@@ -154,7 +154,7 @@ pub fn book(app: &mut DesignApp, ui: &mut egui::Ui) {
             let _ = app.run("book.syncStyles", json!({}));
         }
         if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Export PDF…"))).clicked()
-            && let Some(path) = app.services.pick_save.as_mut().and_then(|f| f("Book.pdf"))
+            && let Some(path) = app.pick_save("Book.pdf")
             && let Err(e) = app.run("book.exportPdf", json!({"path": path}))
         {
             app.status_error("Book", e);

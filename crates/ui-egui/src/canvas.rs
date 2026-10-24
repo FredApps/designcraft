@@ -1251,6 +1251,9 @@ fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Docum
         if sel.items.len() == 1 && sel.text.is_none() {
             // InDesign draws a 1 pt bounding box around the selection.
             painter.rect_stroke(xf.rect(a.transform_rect_bbox(it.bounds())), 0.0, Stroke::new(1.0, color), StrokeKind::Middle);
+        } else if sel.key == Some(*id) {
+            // The key object for Align: a thicker bounding box, as in InDesign.
+            painter.rect_stroke(xf.rect(a.transform_rect_bbox(it.bounds())), 0.0, Stroke::new(3.0, color), StrokeKind::Middle);
         }
         let b = xf.rect(a.transform_rect_bbox(it.bounds()));
         union = Some(union.map_or(b, |u| u.union(b)));
@@ -5317,7 +5320,7 @@ mod tests {
         let (pen, direct, text) = (shown("pen"), shown("directSelection"), shown("type"));
         let ppp = h.ctx.pixels_per_point();
         let images = &mut h.state_mut().cursors;
-        match crate::cursors::MODE {
+        match crate::cursors::mode() {
             crate::cursors::Mode::Os => {
                 assert_eq!(pen.1, images.get(Cursor::Pen, ppp), "Pen");
                 assert_eq!(direct.1, images.get(Cursor::ArrowHollow, ppp), "Direct Selection");

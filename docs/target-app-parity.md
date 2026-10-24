@@ -1,6 +1,6 @@
 # DesignCraft parity with Adobe InDesign
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-16 · **Change:** minor (File ▸ Open Recent; .indd and .indt open through indd-utils; text threads by hand; image clipping paths from IDML; anchored objects wrap text; Tabs panel listed as present (#343); spring-loaded Zoom navigation; recovery checkpoint retention; cancelable macOS Dock Quit; Based on Parent; object styles carry effects; colour management on craft-cms, Coated FOGRA39 default CMYK; swatches on placed greyscale and bitmap images) · **Target:** Adobe InDesign 2026 (21.6.0.57, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (PDF/X-4 visible unembedded font detection, #909; autoflow fills the following pages first; File ▸ Open Recent; .indd and .indt open through indd-utils; text threads by hand; image clipping paths from IDML; anchored objects wrap text; Tabs panel listed as present (#343); spring-loaded Zoom navigation; recovery checkpoint retention; cancelable macOS Dock Quit; Based on Parent; object styles carry effects; colour management on craft-cms, Coated FOGRA39 default CMYK; swatches on placed greyscale and bitmap images) · **Target:** Adobe InDesign 2026 (21.6.0.57, macOS)
 
 The authoritative assessment of how close DesignCraft is to Adobe InDesign. [ROADMAP.md](../ROADMAP.md)
 summarizes it; [gaps.md](gaps.md) lists every known shortfall one at a time; the feature-by-feature
@@ -211,17 +211,24 @@ table is the one summed.
 | Fill, stroke, colour | 100% | 60% | 20–35 | hex entry (#323); Assign Profiles / Convert to Profile; color-managed proofing depth; Adobe Color Themes OOS |
 | Effects & transparency | 100% | 50% | 20–30 | effects fidelity vs InDesign unmeasured; Clear Effects / Clear All Transparency; flattener depth |
 | Placing & links | 93% | 55% | 20–35 | EPS is preview-only (no PostScript interpreter); Edit Original; placed PDF layer visibility; INDD page place |
-| Type & text frames | 99% | 45% | 40–60 | Primary Text Frame pages users can't delete (alpha blocker, #165); autoflow doesn't fill existing pages; no threading into grouped frames with the loaded cursor; caret formatting discarded (#289); Notes/Track Changes menus; frame grids |
+| Type & text frames | 99% | 45% | 40–60 | Primary Text Frame pages users can't delete (alpha blocker, #165); autoflow sets new frames on following pages instead of flowing into their primary text frame; caret formatting discarded (#289); Notes/Track Changes menus; frame grids |
 | Typography | 100% | 45% | (typography dimension) | see [typography-parity.md](typography-parity.md) |
 | Styles | 100% | 60% | 15–25 | Paragraph Styles edit/delete reported failing (#169); style options depth |
 | Tables | 100% | 55% | 25–40 | anchored objects in cells not drawn (#163); Table ▸ Table Options submenus, Diagonal Lines, Edit Header/Footer |
 | Long documents | 100% | 45% | 30–50 | Books are shallow (sync, book pagination, book PDF/TOC/index); Table of Contents Styles |
 | Interactivity & digital | 100% | 40% | 30–50 | HTML export basic (#314); fixed-layout EPUB is page images; no animation, timing, media playback |
-| Output & production | 92% | 55% | 40–70 | PDF/X-4 only (no X-1a/X-3), no PDF/print presets or `.joboptions`, print via craft-print (CUPS/Windows), no trapping; Output Preview panel |
+| Output & production | 92% | 55% | 40–70 | PDF/X-4 only (no X-1a/X-3), with visible unembedded font detection (below); no PDF/print presets or `.joboptions`, print via craft-print (CUPS/Windows), no trapping; Output Preview panel |
 | XML & automation | 100% | 35% | (ecosystem dimension) | no ExtendScript/UXP; XML structure depth |
 | View & navigation | 100% | 65% | 10–20 | Navigator, display badges, Show/Hide extras (content grabber, live corners) |
 | Undo, history, saving | 100% | 70% | 5–10 | Undo/Redo name the action |
 | Accessibility | 100% | 50% | 15–25 | tagged PDF exists; PDF/UA validation, reading order depth, screen-reader support in the UI |
+
+PDF/X-4 export warnings and `validate-pdf` report unembedded fonts drawing visible text, including
+inside placed PDF forms, with font names and pages (#909). Invisible text (render mode 3) is exempt
+from the font-embedding check. Fonts are not embedded or outlined automatically; embedding,
+substitution or outlining of placed-PDF fonts remains missing ([gap 28](gaps.md#28-placed-pdf-font-repair-for-pdfx-4-ff)).
+A document-wide operation limit and a form-nesting depth limit report incomplete font checks rather
+than traversing pathological nesting. This is detection, not complete external PDF/X certification.
 
 ## Remaining effort and calibration
 
@@ -299,7 +306,7 @@ It is evidence of breadth: each item exists. It is not a claim of InDesign-level
 - Edit › Paste Into (copied objects become a frame's content, clipped by it; rendered, PDF and IDML both ways — verified in InDesign 2026); Polygon Settings (sides, star inset; double-click the Polygon tool).
 - Color panel (fill/stroke proxy, CMYK/RGB/Lab sliders with channel ramps, tint slider for swatches, spectrum ramp, Add to Swatches) and Color Picker (double-click the proxy; R/G/B, C/M/Y/K and hex fields; a CMYK colour stays CMYK unless R/G/B values are typed); mixed colours are unnamed (not listed in Swatches until added); `object.color`, `swatch.addToSwatches`, `swatch.addUnnamed`.
 - Threading: click a selected text frame's in or out port (overset or not) to load the text cursor, then click a frame to thread it (stories merge), click empty space for a column-wide frame down to the bottom margin, or drag a frame; Shift-click autoflows, Alt-click stays loaded; click the linked frame or double-click a port to break the thread; Esc unloads. Link and unthread cursors show where a click threads or unthreads. `text.thread`, `text.unthread`, `text.removeFromThread`.
-- Place text files: Word (.docx: styles by name with their attributes, bold/italic/underline/size/font, footnotes, tables, tabs, breaks), RTF and plain text, into the insertion point, the selected frame or a new frame; autoflow threads one frame per page column and adds pages until the text fits; Remove Styles option (`designcraft-textimport`).
+- Place text files: Word (.docx: styles by name with their attributes, bold/italic/underline/size/font, footnotes, tables, tabs, breaks), RTF and plain text, into the insertion point, the selected frame or a new frame; autoflow threads one frame per page column, on the pages that follow first, then adds pages at the end of the document until the text fits; Remove Styles option (`designcraft-textimport`).
 - Gradient Feather (⇧G tool, `object.gradientFeather`): objects fade along a linear or radial opacity gradient, on screen and as a soft mask in PDF.
 - Script Label (`object.label`, `object.findByLabel`), alt text (`object.altText`), Isolate Blending / Knockout Group (`object.transparencyGroup`; on screen, PDF isolates), Table ▸ Sort (`table.sortRows`, numeric-aware, header/footer fixed).
 - File ▸ Export Text (`file.exportText`): a story as Text Only or RTF (fonts, styles, alignment, indents, tables as tab-separated rows); Export EPUB now asks for a path in the UI.
@@ -368,7 +375,7 @@ It is evidence of breadth: each item exists. It is not a claim of InDesign-level
 - Object States (`states.create/show/rename/release/list`, Object States panel): multi-state objects show one state on screen and in PDF.
 - Buttons (`button.set/clear/list`, Buttons and Forms panel): go to page / next / previous / first / last / URL as PDF link annotations. Form fields too (`form.set/clear/list`: text fields, check boxes, combo and list boxes, signature fields; required, multiline, defaults) exported as AcroForm widgets through an incremental update (not in PDF/X or PDF/A).
 - Power Zoom (Hand tool: press and hold still for half a second, or Alt-press): zoom out to the spread, aim the red view rectangle, release to zoom back in there.
-- Graphic cells (`table.placeGraphic`, `table.textCell`, Table › Convert Cell Type, Table panel): images in table cells, fitted or filled, clipped to the cell on screen and in PDF.
+- Graphic cells (`table.placeGraphic`, `table.textCell`, Table › Convert Cell Type, Table panel): images in table cells, fitted or filled, clipped to the cell on screen and in PDF; IDML export writes them as an inline graphic in the cell.
 - Live Distribute (Space while dragging a selection handle; `transform.resize {distribute}`): objects keep their size and spread with the bounds.
 - Flex Layout (InDesign 2026; `flex.add`, `flex.convert`, `flex.remove`, `flex.set`, `flex.reorder`, Window › Flex Layout and the Properties panel's Flex Layout section): a frame lays out its objects in rows or columns by direction, wrap, justification (Flex Start, Center, Flex End, Space Between, Space Around, Space Evenly), the alignment grid, Fixed/Auto width and height, padding and spacing; aligned objects are detected on Add (direction, Auto, Space Between); resizing a container reflows it; dragging an object in one reorders it. Not yet: item sizing (Fixed/Auto/Fill Space per object), object styles with Flex Layout settings, IDML (a container exports as a frame with pasted-in objects), nested selection cues on the canvas.
 - Liquid Layout (`liquid.pageRule/object`, `guide.liquid`, `layout.createAlternate`, Liquid Layout panel): scale / re-center / guide-based / object-based page rules applied on page resize and Document Setup; dashed liquid guides; alternate layouts as resized page copies in a named section. Text in an alternate layout stays linked to the original stories (Links panel shows them out of date; `story.updateLink`).
@@ -463,6 +470,7 @@ Task notes that headed ROADMAP.md:
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-19 | minor | Output assessment records visible unembedded font detection in PDF/X-4 export and `validate-pdf`, the invisible-text exemption, incomplete-check reporting at the operation and nesting-depth limits, and remaining placed-PDF font repair (#909); readiness and hours unchanged |
 | 2026-10-13 | minor | `.indd` and `.indt` open through storytold/indd-utils; INDD remaining work 10–30 h (real-file corpus); readiness unchanged until it is measured |
 | 2026-10-12 | minor | Text threads by hand; stage note and distance to alpha follow the gate (5–7 h, #165); percentages unchanged |
 | 2026-10-11 | minor | Spring-loaded Zoom navigation added to the working feature inventory (DC-1); readiness estimates unchanged |

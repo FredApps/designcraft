@@ -1076,7 +1076,7 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
         }
         "app.saveDialog" => {
             let name = app.session.active().map(|d| format!("{}.designcraft", d.doc.title)).unwrap_or_default();
-            if let Some(path) = app.services.pick_save.as_mut().and_then(|f| f(&name)) {
+            if let Some(path) = app.pick_save(&name) {
                 return Some(app.run("file.saveAs", json!({"path": path})));
             }
             Ok(Value::Null)
@@ -1087,7 +1087,7 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
         }
         "app.saveCopyDialog" => {
             let name = app.session.active().map(|d| format!("{} copy.designcraft", d.doc.title)).unwrap_or_default();
-            if let Some(path) = app.services.pick_save.as_mut().and_then(|f| f(&name)) {
+            if let Some(path) = app.pick_save(&name) {
                 return Some(app.run("file.saveACopy", json!({"path": path})));
             }
             Ok(Value::Null)
@@ -1161,7 +1161,7 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
         "app.exportText" => export_bytes(app, p, "rtf", "file.exportText"),
         "app.packageDialog" => {
             let name = app.session.active().map(|d| format!("{} Folder", d.doc.title)).unwrap_or_default();
-            match app.services.pick_save.as_mut().and_then(|f| f(&name)) {
+            match app.pick_save(&name) {
                 Some(dir) => {
                     let r = app.run("file.package", json!({"dir": dir}));
                     if let Ok(v) = &r {
@@ -1222,7 +1222,7 @@ fn run_ui_inner(app: &mut DesignApp, id: &str, p: &Value) -> Option<Result<Value
         "app.saveSwatches" => {
             let path = match p.get("path").and_then(Value::as_str) {
                 Some(s) => Some(s.to_string()),
-                None => app.services.pick_save.as_mut().and_then(|f| f("Swatches.ase")),
+                None => app.pick_save("Swatches.ase"),
             };
             let Some(path) = path else { return Some(Ok(Value::Null)) };
             let r = match app.run("swatch.save", json!({})) {
@@ -2016,7 +2016,7 @@ fn export_png(app: &mut DesignApp, p: &Value) -> Result<Value, String> {
         Some(s) => Some(s.to_string()),
         None => {
             let name = format!("{}-p{}.png", st.doc.title, page + 1);
-            app.services.pick_save.as_mut().and_then(|f| f(&name))
+            app.pick_save(&name)
         }
     };
     let Some(path) = path else { return Ok(Value::Null) };
@@ -2034,7 +2034,7 @@ fn export_idml(app: &mut DesignApp, p: &Value) -> Result<Value, String> {
         Some(s) => Some(s.to_string()),
         None => {
             let name = format!("{}.idml", st.doc.title);
-            app.services.pick_save.as_mut().and_then(|f| f(&name))
+            app.pick_save(&name)
         }
     };
     let Some(path) = path else { return Ok(Value::Null) };
@@ -2071,7 +2071,7 @@ fn export_bytes(app: &mut DesignApp, p: &Value, ext: &str, cmd: &str) -> Result<
         Some(s) => Some(s.to_string()),
         None => {
             let name = format!("{}.{ext}", st.doc.title);
-            app.services.pick_save.as_mut().and_then(|f| f(&name))
+            app.pick_save(&name)
         }
     };
     let Some(path) = path else { return Ok(Value::Null) };
@@ -2095,7 +2095,7 @@ pub(crate) fn export_pdf(app: &mut DesignApp, p: &Value) -> Result<Value, String
         Some(s) => Some(s.to_string()),
         None => {
             let name = format!("{}.pdf", st.doc.title);
-            app.services.pick_save.as_mut().and_then(|f| f(&name))
+            app.pick_save(&name)
         }
     };
     let Some(path) = path else { return Ok(Value::Null) };
@@ -5691,5 +5691,112 @@ mod tests {
         let texts = start_screen_texts(&mut app);
         assert!(texts.iter().any(|t| t == "Recent files"), "{texts:?}");
         assert!(texts.iter().any(|t| t == "gone"), "the card names it without `.designcraft`: {texts:?}");
+    }
+
+    /// On a short window (1366 x 768 laptops) the start screen is taller than the window; the part
+    /// below the fold has to be reachable by scrolling instead of being cut off.
+    #[test]
+    fn start_screen_scrolls_when_the_window_is_too_short() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx, "");
+        let size = egui::vec2(1366.0, 300.0);
+        let mut tile_y = |events: Vec<egui::Event>| {
+            let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)), events, ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| {
+                app.logic(&ui.ctx().clone());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+            out.shapes.iter().find_map(|s| match &s.shape {
+                // The preset tiles paint their names even when scrolled out of view (labels skip that).
+                egui::Shape::Text(t) if t.galley.text() == "Tabloid" => Some(t.pos.y),
+                _ => None,
+            })
+        };
+        let at = egui::pos2(600.0, 150.0);
+        let mut before = None;
+        for _ in 0..3 {
+            before = tile_y(vec![egui::Event::PointerMoved(at)]);
+        }
+        let before = before.expect("the Tabloid tile is laid out");
+        let wheel = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -400.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut after = tile_y(vec![egui::Event::PointerMoved(at), wheel]);
+        for _ in 0..30 {
+            after = tile_y(Vec::new());
+        }
+        let after = after.expect("the Tabloid tile is laid out");
+        assert!(after < before - 50.0, "the start screen should scroll: {before} -> {after}");
+    }
+
+    // Regression test for #329: on the start screen (no document) the Help menu's links were greyed out.
+    #[test]
+    fn help_links_are_enabled_without_a_document() {
+        let app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        assert!(app.session.active().is_none());
+        let ids: Vec<&str> = UI_COMMANDS.iter().map(|c| c.0).filter(|id| id.starts_with("help.")).collect();
+        assert!(ids.contains(&"help.discord") && ids.contains(&"help.github"), "{ids:?}");
+        for id in ids {
+            assert!(menu_enabled(&app, id), "{id} must work from the start screen");
+        }
+        assert!(!menu_enabled(&app, "view.rulers"), "other UI commands still need a document");
+    }
+
+    // Regression test for #248: the start screen offered no A6 sheet (it listed only the first ten presets).
+    #[test]
+    fn start_screen_offers_every_print_preset_including_a6() {
+        let mut app = crate::DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let texts = start_screen_texts(&mut app);
+        for p in designcraft_doc::build::PRESETS.iter().filter(|p| p.intent == designcraft_doc::Intent::Print) {
+            assert!(texts.iter().any(|t| t == p.name), "start screen lacks the {} card: {texts:?}", p.name);
+        }
+        assert!(texts.iter().any(|t| t == "A6"), "{texts:?}");
+        let a6 = designcraft_doc::build::PRESETS.iter().find(|p| p.name == "A6").unwrap();
+        assert!((a6.width - 105.0 * 72.0 / 25.4).abs() < 0.01 && (a6.height - 148.0 * 72.0 / 25.4).abs() < 0.01, "{a6:?}");
+        let page = crate::panels::properties::PAGE_PRESETS.iter().find(|p| p.0 == "A6").expect("Properties page-size list has A6");
+        assert!((page.1 - a6.width).abs() < 0.01 && (page.2 - a6.height).abs() < 0.01, "{page:?} vs {a6:?}");
+    }
+
+    // Regression test for #249: a menu row only reacted over its text, not across the whole row.
+    #[test]
+    fn menu_rows_are_selectable_across_the_full_width() {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 400.0));
+        let entries = vec![cmd_item("app.preferences", Value::Null)];
+        let mut tick = 0;
+        let mut frame = |app: &mut DesignApp, events: Vec<egui::Event>| {
+            tick += 1;
+            let mut row = egui::Rect::NOTHING;
+            let mut output =
+                ctx.run_ui(egui::RawInput { screen_rect: Some(screen), time: Some(tick as f64 / 60.0), events, ..Default::default() }, |ui| {
+                    egui::Area::new(egui::Id::new("menu_rows")).fixed_pos(egui::pos2(50.0, 50.0)).show(ui.ctx(), |ui| {
+                        let before = ui.cursor().min;
+                        menu_column(app, ui, &[("Test", entries.clone())]);
+                        row = egui::Rect::from_min_max(before, ui.min_rect().max);
+                    });
+                });
+            output.textures_delta.clear();
+            row
+        };
+        frame(&mut app, vec![]);
+        let row = frame(&mut app, vec![]);
+        assert!(row.width() >= 239.0, "the column is at least 240 wide: {row:?}");
+        let far = egui::pos2(row.right() - 6.0, row.top() + 8.0);
+        for pressed in [true, false] {
+            frame(
+                &mut app,
+                vec![
+                    egui::Event::PointerMoved(far),
+                    egui::Event::PointerButton { pos: far, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE },
+                ],
+            );
+        }
+        assert!(app.ui.dialog.is_some(), "clicking the empty end of the Preferences… row must choose it");
     }
 }

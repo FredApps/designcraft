@@ -982,7 +982,9 @@ fn align_row(app: &mut DesignApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        let to = app.ui.align_to.clone();
+        // A key object switches Align To to Key Object; choosing another target drops the key.
+        let key = app.session.active().and_then(|st| st.selection.key.filter(|_| st.selection.items.len() > 1));
+        let to = if key.is_some() { "keyObject".to_string() } else { app.ui.align_to.clone() };
         let to_label = match to.as_str() {
             "selection" => "Selection",
             "keyObject" => "Key Object",
@@ -1001,7 +1003,10 @@ fn align_row(app: &mut DesignApp, ui: &mut Ui) {
                 ("Align to Page", "page"),
                 ("Align to Spread", "spread"),
             ] {
-                if ui.selectable_label(app.ui.align_to == id, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, label))).clicked() {
+                if ui.selectable_label(to == id, crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, label))).clicked() {
+                    if let Some(k) = key.filter(|_| id != "keyObject") {
+                        let _ = app.run("selection.key", json!({"id": k.0}));
+                    }
                     app.ui.align_to = id.into();
                     ui.close();
                 }

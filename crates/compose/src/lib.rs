@@ -165,6 +165,20 @@ pub struct PlacedGlyph {
 }
 
 impl PlacedGlyph {
+    /// Whether an underline or a strikethrough runs across this glyph.
+    ///
+    /// A tab is not drawn, but it is a character with an advance, and the rule runs across its
+    /// whole width as InDesign draws it: forms rule their fill-in lines with underlined tabs, and
+    /// without this they lost every writing line (#1466). The spaces a line break trimmed off the
+    /// end, the break characters themselves and the markers' carriers are not part of the line's
+    /// text and are not spanned.
+    pub fn spans_rules(&self) -> bool {
+        if self.visible {
+            return true;
+        }
+        self.adv > 0.0 && matches!(self.rendered_char, '\t' | designcraft_doc::story::RIGHT_INDENT_TAB)
+    }
+
     /// In a vertical frame, the turn that sets this glyph upright, applied after drawing it at `x`
     /// on `baseline`: it hangs from its vertical origin ([`designcraft_fonts::FontFace::v_origin`],
     /// centred across) at `x` on the line's centre, the middle of the font's em box; a tate-chu-yoko
@@ -679,10 +693,12 @@ pub fn frame_specs(doc: &Document, sid: StoryId) -> Vec<FrameSpec> {
                 let abs = doc.first_page_of_spread(si) + pi;
                 (Some(doc.page_name(abs)), Some(abs), sp.pages.get(pi).is_some_and(|p| p.side == designcraft_doc::PageSide::Left))
             }
-            (Some(designcraft_doc::SpreadRef::Parent(pi)), Some(sp)) => {
+            (Some(designcraft_doc::SpreadRef::Parent(_)), Some(sp)) => {
                 let prefix = sp.parent.as_ref().map(|p| p.prefix.clone()).unwrap_or_else(|| "A".into());
-                let _ = pi;
-                (Some(prefix), None, false)
+                // The side of the parent page under the frame, so a folio there aligns to the spine of its own page.
+                let under = sp.page_at_x(item.bounds().center().x).and_then(|pi| sp.pages.get(pi));
+                let left = under.is_some_and(|p| p.side == designcraft_doc::PageSide::Left);
+                (Some(prefix), None, left)
             }
             _ => (None, None, false),
         };
@@ -1674,10 +1690,16 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                 }
                 // A drop cap sits at the start-side indent; the first-line indent doesn't move it.
                 let beside = drop_cap.as_ref().filter(|dc| line_no < dc.lines && col_first_line == 0).map(DropCap::indent);
+                let first_line = if line_no == 0 { pp.first_line_indent } else { 0.0 };
                 let (ind_l, ind_r) = match beside {
                     Some(w) if rtl => (pp.left_indent, pp.right_indent + w),
                     Some(w) => (pp.left_indent + w, pp.right_indent),
-                    None => (pp.left_indent + if line_no == 0 { pp.first_line_indent } else { 0.0 }, pp.right_indent),
+                    // The first-line indent is at the paragraph's start side, which is the right
+                    // one in a right-to-left paragraph: applied on the left it moved the line the
+                    // wrong way, out of the frame for the hanging indent a numbered list uses
+                    // (#1448).
+                    None if rtl => (pp.left_indent, pp.right_indent + first_line),
+                    None => (pp.left_indent + first_line, pp.right_indent),
                 };
                 let lx0 = x0 + ind_l;
                 let lx1 = x1 - ind_r;

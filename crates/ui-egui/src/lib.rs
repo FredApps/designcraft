@@ -71,7 +71,8 @@ pub type Inbox = std::sync::Arc<std::sync::Mutex<Vec<ImportedFile>>>;
 pub struct Services {
     /// Open-file dialog for a purpose (`open`, `place`) → path.
     pub pick_open: Option<PickFn>,
-    /// Save dialog with a suggested name → path.
+    /// Save dialog with a suggested name → path. The name may start with the folder the dialog
+    /// opens in (see [`DesignApp::pick_save`]).
     pub pick_save: Option<PickFn>,
     pub read: Option<ReadFn>,
     pub write: Option<WriteFn>,
@@ -223,6 +224,9 @@ pub struct UiState {
     pub pages_panel: panels::pages::PanelOptions,
     /// Edit › Color Settings (re-applied at start).
     pub color_settings: Option<designcraft_color::cms::ColorSettings>,
+    /// ICC files loaded with Edit › Color Settings › Load Profile… (loaded again at start, before
+    /// `color_settings`, so a loaded working space stays chosen).
+    pub color_profiles: Vec<String>,
     /// View › Proof Colors and View › Proof Setup.
     pub proof_colors: bool,
     pub proof_setup: designcraft_color::cms::ProofSetup,
@@ -236,6 +240,8 @@ pub struct UiState {
     pub flattener: String,
     /// File › Export PDF… options (persisted; see `PdfExportSettings`).
     pub pdf_export: PdfExportSettings,
+    /// The Preview checkbox of Paragraph/Character Style Options, remembered between openings.
+    pub style_preview: bool,
     /// View › Separations Preview: a process plate (0–3) and/or an ink limit (total, 0–4).
     #[serde(skip)]
     pub separation: Option<u8>,
@@ -285,6 +291,10 @@ pub struct UiState {
     pub custom_workspaces: Vec<SavedWorkspace>,
     /// File › New › Document › Recent: the settings of the last documents made, newest first.
     pub recent_new_documents: Vec<designcraft_doc::build::NewDocument>,
+    /// The folder of the last file saved or exported: where the save dialog starts for a
+    /// document never saved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_save_folder: Option<String>,
     /// The font menus' sample text (a key of `panels::FONT_SAMPLES`) and size (0–2).
     pub font_sample: String,
     pub font_preview_size: u8,
@@ -383,12 +393,14 @@ impl Default for UiState {
             pages_parents_height: None,
             pages_panel: Default::default(),
             color_settings: None,
+            color_profiles: Vec::new(),
             proof_colors: false,
             proof_setup: Default::default(),
             dynamic_spelling: false,
             language: String::new(),
             flattener: String::new(),
             pdf_export: PdfExportSettings::default(),
+            style_preview: false,
             separation: None,
             ink_limit: None,
             display_quality: designcraft_render::DisplayQuality::High,
@@ -412,6 +424,7 @@ impl Default for UiState {
             workspace: "Essentials".into(),
             custom_workspaces: Vec::new(),
             recent_new_documents: Vec::new(),
+            last_save_folder: None,
             font_sample: "selected".into(),
             font_preview_size: 1,
             new_document_preview: false,
@@ -749,6 +762,32 @@ impl DesignApp {
 
     pub fn status(&mut self, s: impl Into<String>) {
         self.ui.status = s.into();
+    }
+
+    /// The host's save dialog for `name`, started beside the active document once it has been
+    /// saved, else in the folder of the last file saved or exported (#1653). The answer's folder
+    /// is remembered for the next one.
+    pub(crate) fn pick_save(&mut self, name: &str) -> Option<String> {
+        use std::path::{Path, PathBuf};
+        let folder_of = |path: &str| Path::new(path).parent().filter(|f| !f.as_os_str().is_empty()).map(Path::to_path_buf);
+        let folder = self
+            .session
+            .active()
+            .and_then(|d| d.path.as_deref())
+            .and_then(folder_of)
+            .or_else(|| self.ui.last_save_folder.as_ref().map(PathBuf::from));
+        // Only the last part of a name goes after the folder: a title may hold a slash, and an
+        // empty name would make the folder itself the suggested file.
+        let file = Path::new(name).file_name();
+        let suggested = match (folder, file) {
+            (Some(f), Some(file)) => f.join(file).to_string_lossy().to_string(),
+            _ => name.to_string(),
+        };
+        let picked = self.services.pick_save.as_mut().and_then(|f| f(&suggested))?;
+        if let Some(folder) = folder_of(&picked) {
+            self.ui.last_save_folder = Some(folder.to_string_lossy().to_string());
+        }
+        Some(picked)
     }
 
     /// Did an IME composition end outside the IME this frame (a click, a tool switch)? egui's
@@ -1106,8 +1145,22 @@ impl DesignApp {
         self.window_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
         if !self.color_applied {
             self.color_applied = true;
+            for path in self.ui.color_profiles.clone() {
+                if let Err(e) = self.session.execute("color.loadProfile", &json!({"path": path})) {
+                    log::warn!("Color Settings: {e}");
+                    self.status_error("Color Settings", e);
+                }
+            }
             if let Some(cs) = self.ui.color_settings.clone() {
-                let _ = designcraft_color::cms::set_active(&cs.with_known_profiles());
+                let known = cs.with_known_profiles();
+                for (saved, used) in [(&cs.rgb, &known.rgb), (&cs.cmyk, &known.cmyk)] {
+                    if saved != used {
+                        let e = format!("saved profile {saved} is not available; using {used}");
+                        log::warn!("Color Settings: {e}");
+                        self.status_error("Color Settings", e);
+                    }
+                }
+                let _ = designcraft_color::cms::set_active(&known);
             }
         }
         let scale = self.ui.ui_scale.clamp(0.5, 3.0);
@@ -1832,6 +1885,70 @@ mod tests {
         app.run("file.new", json!({})).unwrap();
         app.run("document.preferences", json!({"horizontalUnits": "inches", "verticalUnits": "millimeters"})).unwrap();
         assert_eq!(app.view_info().unit, Unit::Inches);
+    }
+
+    /// Save and Export PDF dialogs started in the home folder (#1653): they start beside a saved
+    /// document, and for one never saved in the folder of the last save or export.
+    #[test]
+    fn save_dialogs_start_beside_the_document_or_in_the_last_folder() {
+        use std::{cell::RefCell, rc::Rc};
+        let home = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let asked: Rc<RefCell<Vec<String>>> = Rc::default();
+        let answer: Rc<RefCell<Option<String>>> = Rc::default();
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), Services::default());
+        let (seen, reply) = (asked.clone(), answer.clone());
+        app.services.pick_save = Some(Box::new(move |name: &str| {
+            seen.borrow_mut().push(name.to_string());
+            reply.borrow().clone()
+        }));
+        app.services.write = Some(Box::new(|_: &str, _: &[u8]| Ok(())));
+        let last = |asked: &Rc<RefCell<Vec<String>>>| asked.borrow().last().cloned().unwrap_or_default();
+        let export_pdf = |app: &mut DesignApp| {
+            app.ui.dialog = Some(dialogs::Dialog::new("pdfExport", json!({})));
+            app.ui.dialog.as_mut().unwrap().fields.insert("title".into(), json!("Report"));
+            dialogs::confirm(app).unwrap();
+        };
+
+        app.run("file.new", json!({})).unwrap();
+        let untitled = format!("{}.designcraft", app.session.active().unwrap().doc.title);
+        app.run("app.saveDialog", json!({})).unwrap();
+        assert_eq!(last(&asked), untitled, "never saved, nothing remembered: the system's own folder");
+
+        let saved = home.path().join("Brochure.designcraft");
+        *answer.borrow_mut() = Some(saved.to_string_lossy().to_string());
+        app.run("app.saveDialog", json!({})).unwrap();
+        assert_eq!(app.session.active().unwrap().path.as_deref(), Some(&*saved.to_string_lossy()));
+        // An export into another folder becomes the last folder used.
+        *answer.borrow_mut() = Some(elsewhere.path().join("Proof.pdf").to_string_lossy().to_string());
+        export_pdf(&mut app);
+        *answer.borrow_mut() = None;
+        export_pdf(&mut app);
+        assert_eq!(last(&asked), home.path().join("Report.pdf").to_string_lossy(), "a saved document exports beside itself");
+
+        app.run("file.new", json!({})).unwrap();
+        let untitled = format!("{}.designcraft", app.session.active().unwrap().doc.title);
+        app.run("app.saveDialog", json!({})).unwrap();
+        assert_eq!(last(&asked), elsewhere.path().join(untitled).to_string_lossy(), "a new document starts in the last folder used");
+    }
+
+    /// No name (Save with no document) suggested the remembered folder itself as the file, and a
+    /// title with a slash moved the suggestion out of the document's folder.
+    #[test]
+    fn save_dialog_suggestions_keep_the_folder_and_only_a_file_name() {
+        use std::{cell::RefCell, rc::Rc};
+        let folder = tempfile::tempdir().unwrap();
+        let asked: Rc<RefCell<Vec<String>>> = Rc::default();
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), Services::default());
+        let seen = asked.clone();
+        app.services.pick_save = Some(Box::new(move |name: &str| {
+            seen.borrow_mut().push(name.to_string());
+            None
+        }));
+        app.ui.last_save_folder = Some(folder.path().join("Docs").to_string_lossy().to_string());
+        app.pick_save("");
+        app.pick_save("Q1/Q2.pdf");
+        assert_eq!(*asked.borrow(), ["".to_string(), folder.path().join("Docs").join("Q2.pdf").to_string_lossy().to_string()]);
     }
 
     /// An app with one document that has an unsaved edit.
@@ -2927,6 +3044,19 @@ mod browser_import_tests {
         let pixels = designcraft_render::render_pdf_page(&exported, 0, 400).unwrap();
         assert!(pixels.data().iter().filter(|p| p.g > 240 && p.r < 10 && p.b < 10).count() > 1000);
         assert_eq!(pixels.data().iter().filter(|p| p.r > 240 && p.g < 10 && p.b < 10).count(), 0);
+    }
+
+    #[test]
+    fn pdf_options_refuse_a_page_range_instead_of_placing_page_one() {
+        for spec in ["4-5", "2,5", "2-3", "2.5", "-3", "0", "nan", "inf"] {
+            let mut app = app();
+            let request = app.import_request("place");
+            deliver(&mut app, request, "three.pdf", pdf());
+            app.ui.dialog.as_mut().unwrap().fields.insert("page".into(), json!(spec));
+            assert!(dialogs::confirm(&mut app).is_err(), "{spec}");
+            assert!(app.session.doc().unwrap().doc.assets.is_empty(), "{spec}");
+            assert_eq!(app.ui.dialog.as_ref().unwrap().id, "pdfImport", "{spec}");
+        }
     }
 
     #[test]

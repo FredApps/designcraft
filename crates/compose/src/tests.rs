@@ -7310,3 +7310,58 @@ fn rule_above_offset_is_measured_from_the_baseline() {
     assert!((rule.height() - 1.5).abs() < 1e-6);
     assert!(rule.y0 > first.baseline, "the rule stays below the row above: {rule:?}, its baseline {}", first.baseline);
 }
+
+#[test]
+fn parent_page_frames_know_which_side_of_the_spine_they_are_on() {
+    // Folios on a facing-pages parent: towards/away from spine must differ between its left and right page.
+    let mut d = Document::new(&NewDocument::default());
+    let lid = d.default_layer();
+    let w = d.parents[0].pages[0].width;
+    let para = ParaFormat { para: ParaAttrs { align: Some(Align::TowardsSpine), ..Default::default() }, ..Default::default() };
+    let (_, left_story) = d.add_text_frame(SpreadRef::Parent(0), Rect::new(36.0, 700.0, w - 36.0, 730.0), lid, "7", para.clone()).unwrap();
+    let (_, right_story) = d.add_text_frame(SpreadRef::Parent(0), Rect::new(w + 36.0, 700.0, 2.0 * w - 36.0, 730.0), lid, "8", para).unwrap();
+    assert!(frame_specs(&d, left_story)[0].left_page);
+    assert!(!frame_specs(&d, right_story)[0].left_page);
+}
+
+/// A right-to-left paragraph's first-line indent belongs at its start side, the right. Applied on
+/// the left it moved the first line the wrong way — out of the frame for the hanging indent a
+/// numbered list uses (right indent 10 mm, first line −10 mm), while the wrapped lines sat where
+/// the first line should have been (#1448).
+#[test]
+fn an_rtl_first_line_indent_is_at_the_right_edge() {
+    const MM: f64 = 72.0 / 25.4;
+    // Latin text in a right-to-left paragraph: the direction is the paragraph's, and it is the
+    // placement that is being measured, so no Arabic font has to be present.
+    let text = LOREM;
+    let rect = Rect::new(0.0, 0.0, 200.0, 300.0);
+    let para = |dir, align, first, left, right| ParaAttrs {
+        direction: Some(dir),
+        align: Some(align),
+        first_line_indent: Some(first),
+        left_indent: Some(left),
+        right_indent: Some(right),
+        ..Default::default()
+    };
+    // The hanging indent of a numbered list, right to left.
+    let (d, sid, _) = doc_with(text, rect, para(designcraft_doc::TextDirection::RightToLeft, Align::Right, -10.0 * MM, 0.0, 10.0 * MM));
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let lines = all_lines(&cs);
+    assert!(lines.len() >= 2, "the text wraps: {}", lines.len());
+    let right_edge = |l: &Line| l.glyphs.iter().filter(|g| g.visible).map(|g| g.x + g.adv).fold(f64::MIN, f64::max);
+    let left_edge = |l: &Line| l.glyphs.iter().filter(|g| g.visible).map(|g| g.x).fold(f64::MAX, f64::min);
+    // The first line reaches the frame's right edge; the wrapped lines stop 10 mm short of it.
+    assert!((right_edge(lines[0]) - rect.x1).abs() < 1.0, "first line at the edge: {}", right_edge(lines[0]));
+    assert!((right_edge(lines[1]) - (rect.x1 - 10.0 * MM)).abs() < 1.0, "wrapped line indented: {}", right_edge(lines[1]));
+    // And nothing leaves the frame on the left, which is where the first line used to go.
+    for (i, l) in lines.iter().enumerate() {
+        assert!(left_edge(l) >= rect.x0 - 0.01, "line {i} starts inside the frame: {}", left_edge(l));
+    }
+
+    // The same paragraph left to right is unchanged: the first line hangs on the left.
+    let (d, sid, _) = doc_with(text, rect, para(designcraft_doc::TextDirection::LeftToRight, Align::Left, -10.0 * MM, 10.0 * MM, 0.0));
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let lines = all_lines(&cs);
+    assert!((left_edge(lines[0]) - rect.x0).abs() < 1.0, "left to right, first line at the edge: {}", left_edge(lines[0]));
+    assert!((left_edge(lines[1]) - (rect.x0 + 10.0 * MM)).abs() < 1.0, "left to right, wrapped line indented: {}", left_edge(lines[1]));
+}

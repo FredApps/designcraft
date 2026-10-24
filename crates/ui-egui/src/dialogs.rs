@@ -1991,8 +1991,8 @@ fn preferences(app: &crate::DesignApp, ui: &mut egui::Ui, d: &mut Dialog, max_he
                     egui::ComboBox::from_id_salt("pref_language").width(180.0).height(400.0).selected_text(crate::rtl::widget(ui, current)).show_ui(
                         ui,
                         |ui| {
-                            for (code, name) in crate::i18n::LANGUAGES {
-                                if ui.selectable_label(*code == app.ui.language, crate::rtl::widget(ui, *name)).clicked() {
+                            for (code, name) in crate::i18n::picker_languages() {
+                                if ui.selectable_label(code == app.ui.language, crate::rtl::widget(ui, name)).clicked() {
                                     // Applied by `show` right after this frame, which has `&mut DesignApp`.
                                     d.fields.insert("applyLanguage".into(), json!(code));
                                 }
@@ -2456,6 +2456,9 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                         {
                             match app.session.execute("color.loadProfile", &json!({"path": path})) {
                                 Ok(_) => {
+                                    // Replayed in load order at start-up, so the latest load of a path comes last.
+                                    app.ui.color_profiles.retain(|p| p != &path);
+                                    app.ui.color_profiles.push(path);
                                     let f = app.session.execute("color.settings", &json!({})).unwrap_or_default();
                                     d.fields.insert("profiles".into(), f["profiles"].clone());
                                 }
@@ -2836,6 +2839,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             if matches!(d.id.as_str(), "paragraphStyleOptions" | "characterStyleOptions") && !d.b("new") {
                 check(ui, &mut d, "preview", crate::i18n::tr(&app.ui.language, "Preview"));
+                app.ui.style_preview = d.b("preview");
                 style_options_preview(app, &mut d);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -3275,13 +3279,29 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
         }
         "pdfImport" => {
             let crop = d.s("crop");
+            // One page number, 1 or more; a blank field is page 1. A range or list ("4-5", "2,5"), a
+            // fraction or a negative is refused rather than placing some other page.
+            let raw = if d.fields.get("page").is_none_or(Value::is_null) { String::new() } else { d.s("page") };
+            let page = match raw.trim() {
+                "" => 1,
+                t => match t.parse::<u64>() {
+                    Ok(n) if n >= 1 => n,
+                    _ => {
+                        let e = "Enter a single page number; one page is placed at a time".to_string();
+                        let mut d = d;
+                        d.fields.insert("status".into(), json!(e));
+                        app.ui.dialog = Some(d);
+                        return Err(e);
+                    }
+                },
+            };
             if d.b("async") {
-                return app.confirm_pdf_import(d.n("page").unwrap_or(1.0).max(1.0) as u64, if crop.is_empty() { "crop".into() } else { crop });
+                return app.confirm_pdf_import(page, if crop.is_empty() { "crop".into() } else { crop });
             }
             if let Some(target) = d.fields.get("target").and_then(Value::as_u64) {
                 app.activate_import_target(&crate::ImportRequest { purpose: "place".into(), target: Some(target) })?;
             }
-            app.place_file(json!({"path": d.s("path"), "pdfPage": d.n("page").unwrap_or(1.0).max(1.0) as u64, "pdfCrop": if crop.is_empty() { "crop".to_string() } else { crop }}))
+            app.place_file(json!({"path": d.s("path"), "pdfPage": page, "pdfCrop": if crop.is_empty() { "crop".to_string() } else { crop }}))
         }
         "print" => {
             let pages = if d.s("range") == "all" { Value::Null } else { json!(d.s("pages")) };
@@ -3337,7 +3357,7 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
                 params["title"] = json!(title);
             }
             let name = if title.is_empty() { "Export.pdf".to_string() } else { format!("{title}.pdf") };
-            match app.services.pick_save.as_mut().and_then(|f| f(&name)) {
+            match app.pick_save(&name) {
                 Some(path) => {
                     params["path"] = json!(path);
                     crate::menus::export_pdf(app, &params)
@@ -5154,7 +5174,7 @@ pub fn open_style_options(app: &mut DesignApp, para: bool, name: &str) {
         return;
     }
     let id = if para { "paragraphStyleOptions" } else { "characterStyleOptions" };
-    app.ui.dialog = Some(Dialog::new(id, json!({"name": name})));
+    app.ui.dialog = Some(Dialog::new(id, json!({"name": name, "preview": app.ui.style_preview})));
 }
 
 /// New Paragraph Style… / New Character Style…: the style options for a style made on OK, named
@@ -7771,6 +7791,33 @@ mod tests {
     }
 
     #[test]
+    fn style_options_preview_choice_is_remembered_on_reopen() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.run("style.paragraph.create", json!({"name":"Tutorial","chars":{"size":10}})).unwrap();
+        open_style_options(&mut app, true, "Tutorial");
+        let mut h = Harness::builder().with_size(egui::vec2(1000.0, 800.0)).build_ui_state(
+            |ui, app: &mut DesignApp| {
+                let key = egui::Id::new("style_preview_remember_fonts");
+                if ui.data(|d| d.get_temp::<bool>(key)).is_none() {
+                    crate::theme::install_fonts(ui.ctx(), "");
+                    ui.data_mut(|d| d.insert_temp(key, true));
+                    return;
+                }
+                show(app, ui.ctx());
+            },
+            app,
+        );
+        h.run_steps(3);
+        h.get_by_label("Preview").click();
+        h.run_steps(3);
+        cancel(h.state_mut());
+        open_style_options(h.state_mut(), true, "Tutorial");
+        assert!(h.state().ui.dialog.as_ref().unwrap().b("preview"), "Preview stays checked on reopen");
+    }
+
+    #[test]
     fn style_options_preview_updates_all_uses_cancels_and_commits_once() {
         use egui_kittest::{Harness, kittest::Queryable};
         for paragraph in [true, false] {
@@ -9102,7 +9149,11 @@ mod tests {
             for _ in 0..3 {
                 dialog_frame(&mut app, &ctx, screen, vec![]);
             }
-            let height = visible_label(&dialog_frame(&mut app, &ctx, screen, vec![]), screen, "66p1");
+            // With craft-fonts' Noto Sans Arabic the rows above are taller, so at the smallest size the
+            // Height field starts partly below the body's clip: scroll to it like the other fields.
+            let labels = dialog_frame(&mut app, &ctx, screen, vec![]);
+            let (_, _, body) = labels.iter().find(|(text, _, _)| text.trim() == "66p1").expect("66p1 is painted");
+            let height = scroll_to_label(&mut app, &ctx, screen, body.center(), "66p1");
             click_dialog(&mut app, &ctx, screen, height.center());
             dialog_frame(
                 &mut app,
