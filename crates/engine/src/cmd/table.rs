@@ -1273,6 +1273,35 @@ fn resize_track(sizes: &[f64], index: usize, delta: f64, keep: bool) -> Option<V
     out.iter().all(|v| v.is_finite()).then_some(out)
 }
 
+/// The frame a border drag names must hold the table's story and be editable.
+fn check_border_frame(st: &crate::DocState, p: &Value, story: designcraft_doc::StoryId) -> Result<()> {
+    const ID: &str = "table.resizeBorder";
+    if let Some(fid) = super::id_param(p, "frame") {
+        let it = st.doc.item(fid).ok_or_else(|| bad(ID, format!("no frame {}", fid.0)))?;
+        if it.text_frame().map(|f| f.story) != Some(story) {
+            return Err(bad(ID, "the table is not in that frame's story"));
+        }
+        if it.locked || st.doc.layer(it.layer).is_some_and(|l| l.locked) {
+            return Err(bad(ID, "the frame or its layer is locked"));
+        }
+    }
+    Ok(())
+}
+
+/// The change in track size: `delta`, or `size` measured from the current size `cur`.
+fn border_delta(p: &Value, cur: f64) -> Result<f64> {
+    const ID: &str = "table.resizeBorder";
+    let delta = match (p.get("delta").and_then(Value::as_f64), p.get("size").and_then(Value::as_f64)) {
+        (Some(d), _) => d,
+        (None, Some(sz)) => sz - cur,
+        (None, None) => return Err(bad(ID, "`delta` or `size` required")),
+    };
+    if !delta.is_finite() {
+        return Err(bad(ID, "`delta`/`size` must be a finite number"));
+    }
+    Ok(delta)
+}
+
 fn resize_border(s: &mut Session, p: &Value) -> Result<Value> {
     const ID: &str = "table.resizeBorder";
     let column = match str_param(p, "axis") {
@@ -1284,15 +1313,7 @@ fn resize_border(s: &mut Session, p: &Value) -> Result<Value> {
     let keep = p.get("keepTableSize").and_then(Value::as_bool).unwrap_or(false);
     let g = target(s, p, ID)?;
     let st = s.doc()?;
-    if let Some(fid) = super::id_param(p, "frame") {
-        let it = st.doc.item(fid).ok_or_else(|| bad(ID, format!("no frame {}", fid.0)))?;
-        if it.text_frame().map(|f| f.story) != Some(g.story) {
-            return Err(bad(ID, "the table is not in that frame's story"));
-        }
-        if it.locked || st.doc.layer(it.layer).is_some_and(|l| l.locked) {
-            return Err(bad(ID, "the frame or its layer is locked"));
-        }
-    }
+    check_border_frame(st, p, g.story)?;
     let t = st.doc.story(g.story).and_then(|x| x.tables.get(&g.table)).ok_or_else(|| bad(ID, "no table"))?;
     let sizes: Vec<f64> = if column {
         t.columns.iter().map(|c| c.width).collect()
@@ -1301,14 +1322,7 @@ fn resize_border(s: &mut Session, p: &Value) -> Result<Value> {
         (0..t.nrows()).map(|r| composed_row_height(&cs, t, r).unwrap_or(MIN_TRACK)).collect()
     };
     let cur = *sizes.get(index).ok_or_else(|| bad(ID, format!("index {index} out of range")))?;
-    let delta = match (p.get("delta").and_then(Value::as_f64), p.get("size").and_then(Value::as_f64)) {
-        (Some(d), _) => d,
-        (None, Some(sz)) => sz - cur,
-        (None, None) => return Err(bad(ID, "`delta` or `size` required")),
-    };
-    if !delta.is_finite() {
-        return Err(bad(ID, "`delta`/`size` must be a finite number"));
-    }
+    let delta = border_delta(p, cur)?;
     let new = resize_track(&sizes, index, delta, keep).ok_or_else(|| bad(ID, "invalid table geometry"))?;
     let size = new.get(index).copied().unwrap_or(cur);
     let scaled = keep && index + 1 == sizes.len();
@@ -1751,7 +1765,7 @@ fn table_style_fields(ts: &mut designcraft_doc::TableStyle, p: &Value, border: O
         ts.borders = Default::default();
     }
     if let Some(a) = p.get("altRows").and_then(Value::as_object) {
-        let n = |k: &str, d: u32| a.get(k).and_then(Value::as_u64).map_or(d, |v| v as u32);
+        let n = |k: &str, d: u32| a.get(k).and_then(Value::as_u64).map_or(d, |v| u32::try_from(v).unwrap_or(u32::MAX));
         let c = |k: &str| a.get(k).and_then(Value::as_str).unwrap_or(designcraft_color::swatch::NONE).to_string();
         let t = |k: &str| a.get(k).and_then(Value::as_f64).map_or(1.0, |v| v.clamp(0.0, 1.0) as f32);
         ts.alt_rows = Some(designcraft_doc::AltFills {
@@ -2003,6 +2017,7 @@ fn place_graphic(s: &mut Session, p: &Value) -> Result<Value> {
         let t = st.table_mut(g.table).ok_or_else(|| bad(ID, "no table"))?;
         let cell = t.cell_mut(r, c).ok_or_else(|| bad(ID, format!("no cell {r},{c}")))?;
         cell.graphic = Some(designcraft_doc::Graphic {
+            layer_options: None,
             asset: aid,
             size: (nw, nh),
             xf,
@@ -2464,5 +2479,24 @@ mod resize_border_tests {
         assert_eq!(table(&s), before);
         s.execute("object.setFlags", &json!({"ids": [f], "locked": true})).unwrap();
         assert!(s.execute("table.resizeBorder", &json!({"frame": f, "table": t, "axis": "column", "index": 0, "delta": 5})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod style_alt_rows_tests {
+    use serde_json::json;
+
+    use super::table_style_fields;
+
+    #[test]
+    fn style_alt_rows_counts_saturate() {
+        let mut ts = designcraft_doc::TableStyle::default();
+        let p = json!({"altRows": {"first": 4294967297u64, "next": 4294967296u64, "skipFirst": 4294967295u64, "skipLast": 3}});
+        table_style_fields(&mut ts, &p, None);
+        let a = ts.alt_rows.unwrap();
+        assert_eq!(a.first, u32::MAX, "first");
+        assert_eq!(a.next, u32::MAX, "next");
+        assert_eq!(a.skip_first, u32::MAX, "skip_first");
+        assert_eq!(a.skip_last, 3, "skip_last");
     }
 }

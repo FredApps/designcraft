@@ -147,6 +147,17 @@ impl Default for BaselineGrid {
     }
 }
 
+impl BaselineGrid {
+    /// The first grid line on `page`, measured down from the page top: `start` from the top of
+    /// the page or from its top margin. The other lines follow every `increment` below it.
+    pub fn origin(&self, page: &page::Page) -> f64 {
+        match self.relative_to {
+            GridRelative::TopOfPage => self.start,
+            GridRelative::TopMargin => self.start + page.margins.top,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct DocumentGrid {
@@ -332,6 +343,26 @@ pub enum ChapterSource {
     SameAsPrevious,
 }
 
+/// EPUB Export Options › Split Document: where a reflowable EPUB starts a new content file.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EpubSplit {
+    /// One content file.
+    #[default]
+    Off,
+    /// Single Paragraph Style: a file starts before each paragraph of the named style.
+    Style(String),
+    /// Based on Paragraph Style Export Tags: a file starts before each paragraph of a style whose
+    /// Export Tagging has Split Document on.
+    ExportTags,
+}
+
+impl EpubSplit {
+    pub fn is_off(&self) -> bool {
+        *self == EpubSplit::Off
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct DocSettings {
@@ -406,6 +437,9 @@ pub struct DocSettings {
     /// The fill and stroke new shapes are drawn with: what the Tools panel's proxy shows and sets
     /// with nothing selected (InDesign's document defaults).
     pub new_object: NewObjectColors,
+    /// EPUB Export Options › Split Document.
+    #[serde(skip_serializing_if = "EpubSplit::is_off")]
+    pub epub_split: EpubSplit,
 }
 
 fn is_true(b: &bool) -> bool {
@@ -471,6 +505,7 @@ impl Default for DocSettings {
             zero_point_locked: false,
             column_guides_locked: true,
             new_object: NewObjectColors::default(),
+            epub_split: EpubSplit::Off,
         }
     }
 }

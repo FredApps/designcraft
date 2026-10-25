@@ -20,6 +20,15 @@ const TOC_STYLE_ID: &str = "TOCStyle/Table of Contents";
 const TOC_STYLE_NAME: &str = "Table of Contents";
 const NO_CHAR_ID: &str = "CharacterStyle/$ID/[No character style]";
 
+// Retained IDML attributes have unprefixed ASCII names. Native JSON can be
+// edited independently: never let its map keys become XML syntax or Self IDs.
+fn graphic_layer_attribute_name(key: &str) -> bool {
+    !key.is_empty()
+        && key != "Self"
+        && key != "xmlns"
+        && key.bytes().enumerate().all(|(i, b)| b.is_ascii_alphabetic() || b == b'_' || (i > 0 && (b.is_ascii_digit() || matches!(b, b'.' | b'-'))))
+}
+
 /// Export options.
 #[derive(Clone, Debug)]
 pub struct ExportOptions {
@@ -177,7 +186,7 @@ impl<'a> Ex<'a> {
     }
 
     fn assign_swatch_ids(&mut self) {
-        let mut used: HashSet<String> = ["Swatch/None", "Color/Paper", "Color/Black", "Color/Registration"].iter().map(|s| s.to_string()).collect();
+        let mut used: HashSet<String> = ["Swatch/None", "Color/Paper", "Color/Black", "Color/Registration"].iter().map(ToString::to_string).collect();
         self.swatch_ids.insert(swatch::NONE.into(), "Swatch/None".into());
         self.swatch_ids.insert(swatch::PAPER.into(), "Color/Paper".into());
         self.swatch_ids.insert(swatch::BLACK.into(), "Color/Black".into());
@@ -309,28 +318,7 @@ impl<'a> Ex<'a> {
             );
         }
         for t in &d.styles.mojikumi_tables {
-            let mut e = El::new("MojikumiTable").attr("Self", format!("MojikumiTable/{}", escape_id(&t.name))).attr("Name", &t.name);
-            if !t.based_on.is_empty() {
-                e.set("BasedOnMojikumiSet", &t.based_on);
-            }
-            if !t.overrides.is_empty() {
-                let mut list = El::new("OverrideMojikumiAkiList");
-                for r in &t.overrides {
-                    list.push(
-                        El::new("OverrideMojikumiAkiType")
-                            .attr("TargetMojikumiClass", r.target_class)
-                            .attr("SideMojikumiClass", r.side_class)
-                            .attr("SideIsAfterTarget", bool_s(r.after))
-                            .attr("Minimum", num(r.minimum))
-                            .attr("Desired", num(r.desired))
-                            .attr("Maximum", num(r.maximum))
-                            .attr("CompressionPriority", r.priority)
-                            .attr("AkiDoesNotFloat", bool_s(r.does_not_float)),
-                    );
-                }
-                e.push(El::new("Properties").child(list));
-            }
-            root.push(e);
+            root.push(mojikumi_table_el(t));
         }
         root.push(El::new("idPkg:Graphic").attr("src", "Resources/Graphic.xml"));
         root.push(El::new("idPkg:Fonts").attr("src", "Resources/Fonts.xml"));
@@ -364,28 +352,7 @@ impl<'a> Ex<'a> {
         }
         // IDML lists layers back to front.
         for l in d.layers.iter().rev() {
-            let color = match names::layer_color_out(l.color) {
-                Some(n) => p("LayerColor", "enumeration", n),
-                None => {
-                    let mut e = El::new("LayerColor").attr("type", "list");
-                    for c in l.color {
-                        e.push(p("ListItem", "double", num(c as f64)));
-                    }
-                    e
-                }
-            };
-            let el = El::new("Layer")
-                .attr("Self", uid(l.id.0))
-                .attr("Name", &l.name)
-                .attr("Visible", bool_s(l.visible))
-                .attr("Locked", bool_s(l.locked))
-                .attr("IgnoreWrap", bool_s(l.suppress_wrap_when_hidden))
-                .attr("ShowGuides", bool_s(l.show_guides))
-                .attr("LockGuides", "false")
-                .attr("UI", "true")
-                .attr("Expendable", "true")
-                .attr("Printable", bool_s(l.printable));
-            root.push(with_props(el, vec![color]));
+            root.push(layer_el(l));
         }
         for (name, _) in masters {
             root.push(El::new("idPkg:MasterSpread").attr("src", name));
@@ -820,6 +787,15 @@ impl<'a> Ex<'a> {
                 designcraft_doc::BlendSpace::Rgb => "RGB",
             },
         ));
+        // Split Document: the style is a reference, a built-in one by its `$ID/` name; an empty
+        // one splits on the styles' export tags.
+        let (break_doc, split_style) = match &s.epub_split {
+            designcraft_doc::EpubSplit::Off => (false, names::style_name_out(PARA_BUILTINS, st::BASIC_PARAGRAPH)),
+            designcraft_doc::EpubSplit::ExportTags => (true, String::new()),
+            designcraft_doc::EpubSplit::Style(n) if PARA_BUILTINS.iter().any(|(o, _)| o == n) => (true, names::style_name_out(PARA_BUILTINS, n)),
+            designcraft_doc::EpubSplit::Style(n) => (true, names::style_self("ParagraphStyle", PARA_BUILTINS, n)),
+        };
+        root.push(El::new("EPubExportPreference").attr("BreakDocument", bool_s(break_doc)).attr("ParagraphStyleName", split_style));
         let a = &s.advanced_type;
         root.push(
             El::new("TextPreference")
@@ -890,6 +866,9 @@ impl<'a> Ex<'a> {
             let pa = with_list_tab(pa, || (styles.resolve_para_style(&ps.name).0, parent_props));
             self.para_attrs(&mut el, &mut props, &pa, parent);
             self.char_attrs(&mut el, &mut props, &ca);
+            if styles.export_tag(&ps.name, false).is_some_and(|t| t.split) {
+                el.set("SplitDocument", "true");
+            }
             pg.insert(&ps.name, with_props(el, props));
         }
         let mut rp = El::new("RootParagraphStyleGroup").attr("Self", self.fresh());
@@ -1570,6 +1549,7 @@ impl<'a> Ex<'a> {
         }
         n!(keep_with_next, "KeepWithNext");
         b!(keep_lines_together, "KeepLinesTogether");
+        b!(ignore_optical_margin, "IgnoreEdgeAlignment");
         b!(keep_all_lines, "KeepAllLinesTogether");
         n!(keep_first, "KeepFirstLines");
         n!(keep_last, "KeepLastLines");
@@ -1828,33 +1808,7 @@ impl<'a> Ex<'a> {
                 .attr("ItemTransform", format!("1 0 0 1 {} {}", num(pg.x - ox), num(-oy)))
                 .child(margin_el(pg));
             let mut pe = pe;
-            // Ruler guides, measured from the ruler origin written in the preferences: the
-            // spread's top left, the page's, or the spine (the import reads them the same way).
-            let left = sp.pages.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-            let left = if left.is_finite() { left } else { 0.0 };
-            let spine = sp.pages.iter().map(|p| p.x - left).filter(|x| *x > 1e-6).fold(f64::INFINITY, f64::min);
-            let spine = if spine.is_finite() && facing { spine } else { 0.0 };
-            let origin_x = match d.settings.ruler_origin {
-                designcraft_doc::RulerOrigin::Spread => left,
-                designcraft_doc::RulerOrigin::Page => pg.x,
-                designcraft_doc::RulerOrigin::Spine => left + spine,
-            };
-            for g in &pg.guides {
-                let vertical = g.orientation == designcraft_doc::Orientation::Vertical;
-                let mut ge = El::new("Guide")
-                    .attr("Self", format!("{}g{}", uid(pg.id.0), pe.elements().count()))
-                    .attr("Orientation", if vertical { "Vertical" } else { "Horizontal" })
-                    .attr("Location", num(if vertical { g.position - origin_x } else { g.position }))
-                    .attr("FitToPage", bool_s(!g.spread))
-                    .attr("ViewThreshold", "5")
-                    .attr("Locked", bool_s(g.locked))
-                    .attr("PageIndex", (first_page + i).to_string())
-                    .attr("GuideType", if g.liquid { "Liquid" } else { "Ruler" });
-                if let Some(l) = g.layer {
-                    ge.set("ItemLayer", uid(l.0));
-                }
-                pe.push(ge);
-            }
+            push_page_guides(d, sp, pg, &mut pe, first_page + i);
             el.push(pe);
         }
         let origin = Affine::translate((-ox, -oy));
@@ -2012,12 +1966,21 @@ impl<'a> Ex<'a> {
         }
         if let Content::Text(t) = &it.content {
             el.push(text_frame_pref(&t.options, &self.sw(&t.options.column_rule_color)));
-            if let Some((start, inc)) = t.options.baseline_grid {
+            if let Some(g) = t.options.baseline_grid {
                 el.push(
                     El::new("BaselineFrameGridOption")
                         .attr("UseCustomBaselineFrameGrid", "true")
-                        .attr("StartingOffsetForBaselineFrameGrid", num(start))
-                        .attr("BaselineFrameGridIncrement", num(inc)),
+                        .attr("StartingOffsetForBaselineFrameGrid", num(g.start))
+                        .attr(
+                            "BaselineFrameGridRelativeOption",
+                            match g.relative_to {
+                                designcraft_doc::FrameGridRelative::TopOfPage => "TopOfPageOfBaselineFrameGridRelativeOption",
+                                designcraft_doc::FrameGridRelative::TopMargin => "TopOfMarginOfBaselineFrameGridRelativeOption",
+                                designcraft_doc::FrameGridRelative::TopOfFrame => "TopOfFrameOfBaselineFrameGridRelativeOption",
+                                designcraft_doc::FrameGridRelative::TopInset => "TopOfInsetOfBaselineFrameGridRelativeOption",
+                            },
+                        )
+                        .attr("BaselineFrameGridIncrement", num(g.increment)),
                 );
             }
         }
@@ -2128,6 +2091,53 @@ impl<'a> Ex<'a> {
         }
         if let Some(c) = &g.clip {
             el.push(clipping_settings(c));
+        }
+        if let Some(options) = &g.layer_options {
+            let mut option = El::new("GraphicLayerOption");
+            for (key, value) in &options.attributes {
+                if graphic_layer_attribute_name(key) {
+                    option.set(key, value);
+                }
+            }
+            // Only an ancestor whose subtree is still open can parent the next layer.
+            // Reopening a closed subtree would reorder native-edited lists on roundtrip.
+            let mut open = Vec::new();
+            let mut parents = Vec::with_capacity(options.layers.len());
+            for i in 0..options.layers.len() {
+                let parent = options.parents.get(i).copied().flatten();
+                if let Some(at) = parent.and_then(|p| open.iter().position(|id| *id == p)).filter(|at| *at < 239) {
+                    open.truncate(at + 1);
+                    parents.push(parent);
+                } else {
+                    open.clear();
+                    parents.push(None);
+                }
+                open.push(i);
+            }
+            let mut children: Vec<Vec<El>> = vec![Vec::new(); options.layers.len()];
+            let mut roots = Vec::new();
+            for (i, attributes) in options.layers.iter().enumerate().rev() {
+                let mut layer = El::new("GraphicLayer").attr("Self", self.fresh());
+                for (key, value) in attributes {
+                    if graphic_layer_attribute_name(key) {
+                        layer.set(key, value);
+                    }
+                }
+                if let Some(nested) = children.get_mut(i) {
+                    for child in std::mem::take(nested).into_iter().rev() {
+                        layer.push(child);
+                    }
+                }
+                if let Some(nested) = parents.get(i).copied().flatten().and_then(|parent| children.get_mut(parent)) {
+                    nested.push(layer);
+                } else {
+                    roots.push(layer);
+                }
+            }
+            for layer in roots.into_iter().rev() {
+                option.push(layer);
+            }
+            el.push(option);
         }
         let uri = match &asset.link {
             Some(l) => path_to_uri(l),
@@ -2285,8 +2295,11 @@ impl<'a> Ex<'a> {
             .attr("StoryTitle", "$ID/");
         el.push(
             El::new("StoryPreference")
-                .attr("OpticalMarginAlignment", "false")
-                .attr("OpticalMarginSize", "12")
+                .attr("OpticalMarginAlignment", bool_s(s.optical_margin.on))
+                .attr(
+                    "OpticalMarginSize",
+                    num(designcraft_doc::OpticalMargin::clamp_size(s.optical_margin.size).unwrap_or(designcraft_doc::OpticalMargin::DEFAULT_SIZE)),
+                )
                 .attr("FrameType", "TextFrameType")
                 .attr("StoryOrientation", if s.vertical { "Vertical" } else { "Horizontal" })
                 .attr(
@@ -2414,6 +2427,7 @@ impl<'a> Ex<'a> {
                                     object_point,
                                     ref_point,
                                     keep_within_column,
+                                    spine_relative,
                                 } => El::new("AnchoredObjectSetting")
                                     .attr("AnchoredPosition", "Anchored")
                                     .attr("AnchorPoint", names::anchor_out(*object_point))
@@ -2424,7 +2438,8 @@ impl<'a> Ex<'a> {
                                     // IDML measures a left-aligned object's X offset leftwards.
                                     .attr("AnchorXoffset", num(if *ref_point % 3 == 0 { 0.0 - *x_offset } else { *x_offset }))
                                     .attr("AnchorYoffset", num(*y_offset))
-                                    .attr("PinPosition", bool_s(*keep_within_column)),
+                                    .attr("PinPosition", bool_s(*keep_within_column))
+                                    .attr("SpineRelative", bool_s(*spine_relative)),
                             };
                             e.push(setting);
                             out.push(Node::El(e));
@@ -3195,6 +3210,90 @@ fn metadata_xmp(d: &Document) -> String {
     )
 }
 
+/// The page's ruler guides, measured from the ruler origin written in the preferences.
+fn push_page_guides(d: &Document, sp: &Spread, pg: &designcraft_doc::Page, pe: &mut El, page_index: usize) {
+    let facing = d.settings.facing_pages;
+    // Ruler guides, measured from the ruler origin written in the preferences: the
+    // spread's top left, the page's, or the spine (the import reads them the same way).
+    let left = sp.pages.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let left = if left.is_finite() { left } else { 0.0 };
+    let spine = sp.pages.iter().map(|p| p.x - left).filter(|x| *x > 1e-6).fold(f64::INFINITY, f64::min);
+    let spine = if spine.is_finite() && facing { spine } else { 0.0 };
+    let origin_x = match d.settings.ruler_origin {
+        designcraft_doc::RulerOrigin::Spread => left,
+        designcraft_doc::RulerOrigin::Page => pg.x,
+        designcraft_doc::RulerOrigin::Spine => left + spine,
+    };
+    for g in &pg.guides {
+        let vertical = g.orientation == designcraft_doc::Orientation::Vertical;
+        let mut ge = El::new("Guide")
+            .attr("Self", format!("{}g{}", uid(pg.id.0), pe.elements().count()))
+            .attr("Orientation", if vertical { "Vertical" } else { "Horizontal" })
+            .attr("Location", num(if vertical { g.position - origin_x } else { g.position }))
+            .attr("FitToPage", bool_s(!g.spread))
+            .attr("ViewThreshold", "5")
+            .attr("Locked", bool_s(g.locked))
+            .attr("PageIndex", page_index.to_string())
+            .attr("GuideType", if g.liquid { "Liquid" } else { "Ruler" });
+        if let Some(l) = g.layer {
+            ge.set("ItemLayer", uid(l.0));
+        }
+        pe.push(ge);
+    }
+}
+
+/// A `MojikumiTable` element with its spacing overrides.
+fn mojikumi_table_el(t: &designcraft_doc::cjk::MojikumiTable) -> El {
+    let mut e = El::new("MojikumiTable").attr("Self", format!("MojikumiTable/{}", escape_id(&t.name))).attr("Name", &t.name);
+    if !t.based_on.is_empty() {
+        e.set("BasedOnMojikumiSet", &t.based_on);
+    }
+    if !t.overrides.is_empty() {
+        let mut list = El::new("OverrideMojikumiAkiList");
+        for r in &t.overrides {
+            list.push(
+                El::new("OverrideMojikumiAkiType")
+                    .attr("TargetMojikumiClass", r.target_class)
+                    .attr("SideMojikumiClass", r.side_class)
+                    .attr("SideIsAfterTarget", bool_s(r.after))
+                    .attr("Minimum", num(r.minimum))
+                    .attr("Desired", num(r.desired))
+                    .attr("Maximum", num(r.maximum))
+                    .attr("CompressionPriority", r.priority)
+                    .attr("AkiDoesNotFloat", bool_s(r.does_not_float)),
+            );
+        }
+        e.push(El::new("Properties").child(list));
+    }
+    e
+}
+
+/// A `Layer` element with its colour property.
+fn layer_el(l: &designcraft_doc::Layer) -> El {
+    let color = match names::layer_color_out(l.color) {
+        Some(n) => p("LayerColor", "enumeration", n),
+        None => {
+            let mut e = El::new("LayerColor").attr("type", "list");
+            for c in l.color {
+                e.push(p("ListItem", "double", num(c as f64)));
+            }
+            e
+        }
+    };
+    let el = El::new("Layer")
+        .attr("Self", uid(l.id.0))
+        .attr("Name", &l.name)
+        .attr("Visible", bool_s(l.visible))
+        .attr("Locked", bool_s(l.locked))
+        .attr("IgnoreWrap", bool_s(l.suppress_wrap_when_hidden))
+        .attr("ShowGuides", bool_s(l.show_guides))
+        .attr("LockGuides", "false")
+        .attr("UI", "true")
+        .attr("Expendable", "true")
+        .attr("Printable", bool_s(l.printable));
+    with_props(el, vec![color])
+}
+
 /// A text variable definition with its type's settings element.
 fn text_variable_el(v: &designcraft_doc::vars::TextVariable) -> El {
     use designcraft_doc::vars::{Use, VarKind};
@@ -3336,6 +3435,10 @@ impl Ex<'_> {
         if let Some(v) = a.kenten_overprint_stroke {
             el.set("KentenOverprintStroke", crate::cjk::overprint_out(v));
         }
+        self.shatai_chars(el, a);
+    }
+
+    fn shatai_chars(&self, el: &mut El, a: &CharAttrs) {
         if let Some(v) = a.shatai_magnification {
             el.set("ShataiMagnification", num(v));
         }
