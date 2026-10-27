@@ -246,7 +246,7 @@ fn controls(ui: &mut egui::Ui, v: &mut View, lang: &str) {
 
 /// About ▸ Contributors: a name toggle, a sort, and the list as a grab bag or a table.
 pub fn contributors_ui(ui: &mut egui::Ui, lang: &str) {
-    let id = egui::Id::new("credits_view");
+    let id = egui::Id::unique("credits_view");
     let mut v = ui.data_mut(|d| d.get_temp::<View>(id)).unwrap_or_default();
     controls(ui, &mut v, lang);
     let list = sorted(CONTRIBUTORS, v.names, v.key, v.ascending);
