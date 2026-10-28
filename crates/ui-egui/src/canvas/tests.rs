@@ -81,12 +81,14 @@ fn a_spread_shows_a_spine_line_between_its_pages() {
 #[test]
 fn the_spine_sits_where_the_pages_of_a_right_to_left_spread_meet() {
     // Bound right to left, the spread lists its right page first. With pages of different
-    // widths, the line must be at their shared edge, not halfway between the outer ones.
+    // sizes, the line must be at their shared edge, not halfway between the outer ones, and
+    // run the height of the taller page, not stop at the shorter one listed first.
     let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
     app.run("file.new", serde_json::json!({"pages": 3, "facingPages": true})).unwrap();
     app.run("layout.documentSetup", serde_json::json!({"binding": "rightToLeft"})).unwrap();
-    let w = app.session.active().unwrap().doc.settings.page_width;
-    app.run("layout.pageSize", serde_json::json!({"pages": [2], "width": w * 0.6})).unwrap();
+    let settings = &app.session.active().unwrap().doc.settings;
+    let (w, h) = (settings.page_width, settings.page_height);
+    app.run("layout.pageSize", serde_json::json!({"pages": [2], "width": w * 0.6, "height": h * 0.6})).unwrap();
     let shapes = canvas_shapes(&mut app);
     let st = app.session.active().unwrap();
     let layout = CanvasLayout::new(&st.doc, false);
@@ -94,6 +96,7 @@ fn the_spine_sits_where_the_pages_of_a_right_to_left_spread_meet() {
     let (right, left) = (xf.rect(layout.page_rect(&st.doc, 1).unwrap()), xf.rect(layout.page_rect(&st.doc, 2).unwrap()));
     assert!((left.max.x - right.min.x).abs() < 0.01, "page 3 is the left page, page 2 the right");
     assert!((left.width() - right.width()).abs() > 1.0, "the pages differ in width");
+    assert!(left.height() - right.height() > 1.0, "page 3 is the taller page");
     assert_eq!(vertical_lines_at(&shapes, left.max.x, left), 1);
 }
 
