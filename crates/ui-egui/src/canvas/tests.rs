@@ -20,6 +20,80 @@ fn a_press_after_a_drag_is_not_a_double_click() {
     assert_eq!(press(Some(up), 0.0, 1.0), 1);
 }
 
+/// The shapes the canvas paints for a new document, after two frames (the first lays out).
+fn canvas_shapes(app: &mut DesignApp) -> Vec<egui::epaint::ClippedShape> {
+    let ctx = egui::Context::default();
+    let mut shapes = Vec::new();
+    for _ in 0..2 {
+        let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 900.0))), ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| show(app, ui));
+        out.textures_delta.clear();
+        shapes = out.shapes;
+    }
+    shapes
+}
+
+/// The spine-coloured vertical hairlines at screen x `x` that run the full height of `page`
+/// (the spine of one spread shares its x with the pages of the spreads above and below it).
+fn vertical_lines_at(shapes: &[egui::epaint::ClippedShape], x: f32, page: Rect) -> usize {
+    let spine = Tokens::get(&egui::Context::default()).text_dim;
+    shapes
+        .iter()
+        .filter(|c| match &c.shape {
+            egui::Shape::LineSegment { points: [a, b], stroke } => {
+                stroke.color == spine
+                    && (a.x - x).abs() < 0.01
+                    && (b.x - x).abs() < 0.01
+                    && a.y.min(b.y) <= page.min.y + 0.01
+                    && a.y.max(b.y) >= page.max.y - 0.01
+            }
+            _ => false,
+        })
+        .count()
+}
+
+#[test]
+fn a_spread_shows_a_spine_line_between_its_pages() {
+    let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+    app.run("file.new", serde_json::json!({"pages": 3, "facingPages": true})).unwrap();
+    let shapes = canvas_shapes(&mut app);
+    let st = app.session.active().unwrap();
+    let layout = CanvasLayout::new(&st.doc, false);
+    let xf = Xf::new(app.canvas_rect.unwrap(), app.view().unwrap());
+    // One spine at each edge two pages of a spread share, the full page height, and none
+    // at the outer edges of a spread or around a page on a spread of its own.
+    let mut pairs = 0;
+    for (si, sp) in st.doc.spreads.iter().enumerate() {
+        let first = st.doc.first_page_of_spread(si);
+        let rects: Vec<Rect> = (0..sp.pages.len()).map(|pi| xf.rect(layout.page_rect(&st.doc, first + pi).unwrap())).collect();
+        for w in rects.windows(2) {
+            assert!((w[0].max.x - w[1].min.x).abs() < 0.01, "pages of a spread meet");
+            assert_eq!(vertical_lines_at(&shapes, w[0].max.x, w[0]), 1, "spine in spread {si}");
+            pairs += 1;
+        }
+        let (left, right) = (rects[0], rects[rects.len() - 1]);
+        assert_eq!(vertical_lines_at(&shapes, left.min.x, left), 0, "outer left edge of spread {si}");
+        assert_eq!(vertical_lines_at(&shapes, right.max.x, right), 0, "outer right edge of spread {si}");
+    }
+    assert!(pairs > 0, "the document has a spread with two pages");
+}
+
+#[test]
+fn the_spine_line_hides_with_the_other_guides() {
+    for (guides, mode) in [(false, ScreenMode::Normal), (true, ScreenMode::Preview), (true, ScreenMode::Presentation)] {
+        let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", serde_json::json!({"pages": 3, "facingPages": true})).unwrap();
+        app.ui.guides = guides;
+        app.ui.screen_mode = mode;
+        let shapes = canvas_shapes(&mut app);
+        let st = app.session.active().unwrap();
+        let layout = CanvasLayout::new(&st.doc, false);
+        let xf = Xf::new(app.canvas_rect.unwrap(), app.view().unwrap());
+        let left = xf.rect(layout.page_rect(&st.doc, 1).unwrap());
+        assert_eq!(vertical_lines_at(&shapes, left.max.x, left), 0, "guides={guides} mode={mode:?}");
+    }
+}
+
 /// While a page's render is on its way the page shows paper, not the black of its shadow.
 #[test]
 fn pages_show_paper_under_their_render() {

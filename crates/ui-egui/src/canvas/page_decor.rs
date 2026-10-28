@@ -49,6 +49,7 @@ pub(super) fn draw_guides(
         let Some(sp) = doc.spread(slot.spread) else { continue };
         if app.ui.guides {
             draw_bleed_and_slug(painter, xf, doc, slot, sp);
+            draw_spine(painter, xf, slot, sp, t);
         }
         let pasteboard = slot.xf.inverse().transform_rect_bbox(layout.pasteboard);
         for (pi, p) in sp.pages.iter().enumerate() {
@@ -61,7 +62,6 @@ pub(super) fn draw_guides(
             draw_page_guides(painter, xf, doc, slot, sp, pi, p, pr, pasteboard, moving, &selection);
         }
     }
-    let _ = t;
 }
 
 /// The bleed and slug outlines of a spread, in their own colours.
@@ -74,6 +74,18 @@ fn draw_bleed_and_slug(painter: &egui::Painter, xf: &Xf, doc: &Document, slot: &
         if let Some(r) = r {
             painter.rect_stroke(rect(r), 0.0, Stroke::new(hair(painter), c32(color)), StrokeKind::Middle);
         }
+    }
+}
+
+/// The spine: a hairline where the pages of a spread meet, the full height of the taller page.
+/// Screen only, like the other guides; the paper is one rectangle and exports never show a seam.
+fn draw_spine(painter: &egui::Painter, xf: &Xf, slot: &SpreadSlot, sp: &designcraft_doc::Spread, t: &Tokens) {
+    let pt = |p: Point| xf.to_screen(slot.xf * p);
+    for pair in sp.pages.windows(2) {
+        let (a, b) = (pair[0].bounds(), pair[1].bounds());
+        let x = (a.x1 + b.x0) / 2.0;
+        let (y0, y1) = (a.y0.min(b.y0), a.y1.max(b.y1));
+        painter.line_segment([pt(Point::new(x, y0)), pt(Point::new(x, y1))], Stroke::new(hair(painter), t.text_dim));
     }
 }
 
