@@ -1,5 +1,8 @@
 use super::object::preview_dropdown;
-use super::*;
+use super::{
+    DesignApp, FIELD_H, NumField, Rect, Sense, Stroke, StrokeKind, Tokens, Ui, Value, block, icons, json, place, section, set_temp_bool, sub,
+    temp_bool, units, vec2, widgets,
+};
 
 // ---------------------------------------------------------------- Flex Layout
 

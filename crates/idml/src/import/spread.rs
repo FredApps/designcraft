@@ -1,6 +1,8 @@
 use super::frame::{fit_columns, margins_of};
 use super::values::{nums, parse_affine};
-use super::*;
+use super::{
+    Affine, Arc, Columns, El, Guide, Importer, ItemId, Margins, Orientation, Page, PageId, PageSide, ParentInfo, Point, Rect, Spread, SpreadId, names,
+};
 
 /// View › Rotate Spread from a `Spread` element's `ItemTransform`: quarter turns clockwise on
 /// screen (IDML y points down, so `0 1 -1 0` is one clockwise turn). The spread's items and

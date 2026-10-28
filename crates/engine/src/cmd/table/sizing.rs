@@ -1,5 +1,5 @@
 use super::target::{edit_table, target};
-use super::*;
+use super::{Result, RowHeightMode, Session, Table, Value, bad, compose, json, ok, str_param};
 
 pub(super) fn set_row_height(s: &mut Session, p: &Value) -> Result<Value> {
     let g = target(s, p, "table.setRowHeight")?;

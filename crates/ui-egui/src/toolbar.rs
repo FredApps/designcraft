@@ -219,24 +219,8 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     }
 }
 
-/// The area under the tools (InDesign 2026 §3 group 5): mini Default Fill/Stroke and Swap, the
-/// overlapping Fill/Stroke proxy, Formatting affects container / text, the Apply None well, a
-/// utility button and the Screen Mode well.
-fn fill_stroke_proxy(app: &mut DesignApp, ui: &mut egui::Ui, width: f32, cols: usize) {
-    let t = Tokens::get(ui.ctx());
-    let target = crate::panels::color_target(app);
-    let doc = app.session.active().map(|d| d.doc.clone());
-    let stroke_front = app.ui.stroke_front;
-    let text_mode = crate::panels::colors_affect_text(app) || app.ui.formatting_affects_text;
-    let (fill_sw, stroke_sw) = match &target {
-        Some((fill, _, stroke, _)) => (fill.clone(), stroke.clone()),
-        // Nothing selected: the colours new shapes are drawn with.
-        None => doc
-            .as_ref()
-            .map_or(("[None]".to_string(), "[Black]".to_string()), |d| (d.settings.new_object.fill.clone(), d.settings.new_object.stroke.clone())),
-    };
-    let x0 = ui.max_rect().min.x + (width - 30.0) / 2.0;
-    // Row 1: default colours + swap.
+/// Row 1 of the proxy: the default-colours and swap buttons.
+fn proxy_default_swap(app: &mut DesignApp, ui: &mut egui::Ui, t: &Tokens, x0: f32, width: f32) {
     let (row, _) = ui.allocate_exact_size(vec2(width, 11.0), Sense::hover());
     let def = egui::Rect::from_min_size(egui::pos2(x0, row.min.y), vec2(10.0, 10.0));
     icons::paint(ui.painter(), def, "default-colors", t.icon);
@@ -260,6 +244,26 @@ fn fill_stroke_proxy(app: &mut DesignApp, ui: &mut egui::Ui, width: f32, cols: u
     {
         let _ = app.run("color.swapFillStroke", json!({}));
     }
+}
+
+/// The area under the tools (InDesign 2026 §3 group 5): mini Default Fill/Stroke and Swap, the
+/// overlapping Fill/Stroke proxy, Formatting affects container / text, the Apply None well, a
+/// utility button and the Screen Mode well.
+fn fill_stroke_proxy(app: &mut DesignApp, ui: &mut egui::Ui, width: f32, cols: usize) {
+    let t = Tokens::get(ui.ctx());
+    let target = crate::panels::color_target(app);
+    let doc = app.session.active().map(|d| d.doc.clone());
+    let stroke_front = app.ui.stroke_front;
+    let text_mode = crate::panels::colors_affect_text(app) || app.ui.formatting_affects_text;
+    let (fill_sw, stroke_sw) = match &target {
+        Some((fill, _, stroke, _)) => (fill.clone(), stroke.clone()),
+        // Nothing selected: the colours new shapes are drawn with.
+        None => doc
+            .as_ref()
+            .map_or(("[None]".to_string(), "[Black]".to_string()), |d| (d.settings.new_object.fill.clone(), d.settings.new_object.stroke.clone())),
+    };
+    let x0 = ui.max_rect().min.x + (width - 30.0) / 2.0;
+    proxy_default_swap(app, ui, &t, x0, width);
     ui.add_space(2.0);
     // Proxy: 19.5 pt squares, fill top-left, stroke bottom-right.
     let (r, _) = ui.allocate_exact_size(vec2(width, 31.0), Sense::hover());

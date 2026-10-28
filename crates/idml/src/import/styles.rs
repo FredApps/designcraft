@@ -1,6 +1,9 @@
 use super::table::uniform_cell_stroke;
 use super::values::tint;
-use super::*;
+use super::{
+    CHAR_BUILTINS, CharacterStyle, El, Fill, Importer, OBJECT_BUILTINS, ObjectStyle, PARA_BUILTINS, ParagraphStyle, Rule, names, st, swatch,
+    unescape_id,
+};
 
 impl<'r> Importer<'r> {
     // ---------- styles ----------

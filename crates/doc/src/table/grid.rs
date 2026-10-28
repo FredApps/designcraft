@@ -1,5 +1,5 @@
 use super::cell::{Cell, Column, Row, RowKind, TableOptions};
-use super::*;
+use super::{CharFormat, Deserialize, ParaFormat, Serialize, Story, StoryId, Table};
 
 /// A rectangular range of cells (inclusive).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,6 +1,6 @@
 use super::rulers::ruler_pieces_of;
 use super::view::current_slot;
-use super::*;
+use super::{CanvasLayout, DRect, DesignApp, Document, GuideSel, Overlay, Point, Pos2, Rect, SpreadRef, SpreadSlot, Xf, json, pos2};
 
 pub(super) const GUIDE_DRAG: &str = "canvas_guide_drag";
 

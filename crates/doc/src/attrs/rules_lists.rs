@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, ParaProps, Serialize};
 
 /// The colour of a paragraph rule that follows the paragraph's text colour.
 pub const TEXT_COLOR: &str = "Text Color";

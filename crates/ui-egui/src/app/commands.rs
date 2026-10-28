@@ -1,4 +1,4 @@
-use super::*;
+use super::{DesignApp, UiRequest, Value, canvas, dialogs, json, menus};
 
 impl DesignApp {
     /// THE entry point for every action (menus, shortcuts, palette, panels, control channel).

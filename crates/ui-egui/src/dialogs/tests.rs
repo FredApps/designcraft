@@ -201,12 +201,16 @@ fn file_info_dialog_stores_the_fields_and_titles_the_pdf() {
     }));
     let names: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let asked = names.clone();
-    app.services.pick_save = Some(Box::new(move |name: &str| {
-        asked.lock().unwrap().push(name.to_string());
-        Some("/tmp/designcraft-file-info.pdf".to_string())
-    }));
+    app.answer_dialogs(move |request| match request {
+        craft_dialogs::Request::File(dialog) => {
+            asked.lock().unwrap().push(dialog.file_name.clone().unwrap_or_default());
+            craft_dialogs::Answer::Paths(vec!["/tmp/designcraft-file-info.pdf".into()])
+        }
+        craft_dialogs::Request::Message(_) => craft_dialogs::Answer::Message(craft_dialogs::MessageResult::Yes),
+    });
     open_pdf_export(&mut app);
     confirm(&mut app).unwrap();
+    app.settle_dialogs();
     assert_eq!(names.lock().unwrap().as_slice(), ["flyer-v3.pdf"]);
     let pdf = String::from_utf8_lossy(&writes.lock().unwrap()[0]).into_owned();
     assert!(pdf.contains("/Title(Spring Catalog)") && !pdf.contains("/Title(flyer-v3)"), "the PDF's title is File Info's");
@@ -214,6 +218,7 @@ fn file_info_dialog_stores_the_fields_and_titles_the_pdf() {
     open_pdf_export(&mut app);
     setup_fields(&mut app, json!({"title": "flyer-v3"}));
     confirm(&mut app).unwrap();
+    app.settle_dialogs();
     let asked = names.lock().unwrap().last().cloned().unwrap_or_default();
     assert_eq!(std::path::Path::new(&asked).file_name().and_then(|n| n.to_str()), Some("flyer-v3.pdf"), "{asked}");
     let pdf = String::from_utf8_lossy(&writes.lock().unwrap()[1]).into_owned();
@@ -1967,11 +1972,11 @@ fn find_scope_dialog_native_pdf_replacement_releases_bounds() {
         let seen_read = read.clone();
         let pick_path = path.to_string_lossy().to_string();
         let read_path = pick_path.clone();
-        app.services.pick_open = Some(Box::new(move |purpose| {
-            assert_eq!(purpose, "place");
+        app.answer_dialogs(move |request| {
+            assert_eq!(place_filter(request), Some("Graphics and text"));
             seen_pick.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Some(pick_path.clone())
-        }));
+            craft_dialogs::Answer::Paths(vec![pick_path.clone().into()])
+        });
         app.services.read = Some(Box::new(move |path| {
             assert_eq!(path, read_path);
             seen_read.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1985,6 +1990,7 @@ fn find_scope_dialog_native_pdf_replacement_releases_bounds() {
         let active = (app.session.active_index(), app.session.documents().len());
         // Exercise engine.execute -> UiRequest::Pick -> native host PDF replacement.
         scope_control(&mut app, &ctx, "engine.execute", json!({"command": "file.place", "params": {}}));
+        app.settle_dialogs();
         assert_eq!(picked.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(read.load(std::sync::atomic::Ordering::SeqCst), 1);
         let dialog = app.ui.dialog.as_ref().unwrap();
@@ -2036,17 +2042,23 @@ fn find_scope_dialog_native_pdf_replacement_releases_bounds() {
     }
 }
 
+/// The first file type an open dialog offers: Place's is "Graphics and text".
+fn place_filter(request: &craft_dialogs::Request) -> Option<&str> {
+    let craft_dialogs::Request::File(dialog) = request else { return None };
+    dialog.filters.first().map(|filter| filter.name.as_str())
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn find_scope_dialog_native_picker_cancel_retains_bounds() {
     let (mut app, ctx, screen, sid) = scope_dialog();
     let picked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let seen = picked.clone();
-    app.services.pick_open = Some(Box::new(move |purpose| {
-        assert_eq!(purpose, "place");
+    app.answer_dialogs(move |request| {
+        assert_eq!(place_filter(request), Some("Graphics and text"));
         seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        None
-    }));
+        craft_dialogs::Answer::Cancelled
+    });
     let read = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let seen_read = read.clone();
     app.services.read = Some(Box::new(move |_| {
@@ -2062,6 +2074,7 @@ fn find_scope_dialog_native_picker_cancel_retains_bounds() {
     let active = (app.session.active_index(), app.session.documents().len());
     let fields = app.ui.dialog.as_ref().unwrap().fields.clone();
     scope_control(&mut app, &ctx, "engine.execute", json!({"command": "file.place", "params": {}}));
+    app.settle_dialogs();
     assert_eq!(picked.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert_eq!(read.load(std::sync::atomic::Ordering::SeqCst), 0);
     assert_eq!(app.ui.dialog.as_ref().unwrap().id, "findChange");
@@ -3087,7 +3100,7 @@ fn confirm_pdf_export_writes_file_and_persists_settings() {
         sink.lock().unwrap().push((path.to_string(), bytes.to_vec()));
         Ok(())
     }));
-    app.services.pick_save = Some(Box::new(|_name: &str| Some("/tmp/designcraft-test.pdf".to_string())));
+    app.answer_dialogs(crate::app::file_dialogs::testing::answer_with(Some("/tmp/designcraft-test.pdf".into())));
 
     app.ui.dialog = Some(Dialog::new("pdfExport", json!({})));
     {
@@ -3099,6 +3112,7 @@ fn confirm_pdf_export_writes_file_and_persists_settings() {
         d.fields.insert("title".into(), json!("Report"));
     }
     confirm(&mut app).unwrap();
+    app.settle_dialogs();
 
     let got = writes.lock().unwrap();
     assert_eq!(got.len(), 1, "confirming the dialog writes exactly one file");
@@ -3160,11 +3174,12 @@ fn confirm_pdf_export_cancelled_save_writes_nothing() {
         sink.lock().unwrap().push((path.to_string(), bytes.to_vec()));
         Ok(())
     }));
-    app.services.pick_save = Some(Box::new(|_name: &str| None));
+    app.answer_dialogs(crate::app::file_dialogs::testing::answer_with(None));
 
     app.ui.dialog = Some(Dialog::new("pdfExport", json!({})));
     let r = confirm(&mut app).unwrap();
     assert_eq!(r, Value::Null);
+    app.settle_dialogs();
     assert!(writes.lock().unwrap().is_empty(), "cancelling the save picker must not write");
 }
 

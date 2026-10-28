@@ -1,5 +1,5 @@
 use super::values::{finite, tint};
-use super::*;
+use super::{Corner, DirectionalFeather, DropShadow, Effects, El, GradientFeather, HashMap, Importer, Node, Stroke, names};
 
 /// InDesign's corner size where a file gives a corner shape without one.
 pub(super) const INDESIGN_CORNER_SIZE: f64 = 12.0;

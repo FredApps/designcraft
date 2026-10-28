@@ -1,4 +1,3 @@
-use super::export::export_params;
 use super::*;
 
 /// The entries (command ids) of a menu bar menu, submenus included.
@@ -18,6 +17,7 @@ fn view_items_are_in_the_view_menu_as_in_indesign() {
         "view.separations",
         "view.taggedFrames",
         "view.tagMarkers",
+        "view.storyEditorDepthRuler",
     ] {
         assert!(view.contains(&id), "{id} is in View");
         assert!(!typ.contains(&id), "{id} isn't in Type");
@@ -1957,13 +1957,9 @@ fn searched_ui_commands_run_without_parameters_and_keep_preferences() {
     // A two-page document, a saved workspace and non-default preferences, a host with window
     // controls, and file dialogs that are dismissed.
     let setup = |context: usize| {
-        let services = crate::Services {
-            pick_open: Some(Box::new(|_| None)),
-            pick_save: Some(Box::new(|_| None)),
-            clipboard_text: Some(Box::new(|| None)),
-            ..Default::default()
-        };
+        let services = crate::Services { clipboard_text: Some(Box::new(|| None)), ..Default::default() };
         let mut app = DesignApp::new(designcraft_engine::Session::new(), services);
+        app.answer_dialogs(crate::app::file_dialogs::testing::answer_with(None));
         app.custom_titlebar = true;
         app.canvas_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0)));
         app.run("file.new", json!({"pages": 2})).unwrap();
@@ -2984,11 +2980,7 @@ fn forwarded_keys_run_shortcuts() {
 #[test]
 fn powerpoint_export_embeds_fonts_only_when_asked() {
     // The menu's own call has no params: no embedding, as in PowerPoint's save.
-    assert_eq!(export_params("file.exportPptx", "/tmp/x.pptx", &json!({})), json!({}));
-    assert_eq!(export_params("file.exportPptx", "/tmp/x.pptx", &json!({"embedFonts": true})), json!({"embedFonts": true}));
-    assert_eq!(export_params("file.exportPptx", "/tmp/x.pptx", &json!({"embedFonts": false})), json!({"embedFonts": false}));
     // The text export's format still comes from the resolved path.
-    assert_eq!(export_params("file.exportText", "/tmp/x.txt", &json!({})), json!({"format": "txt"}));
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use super::state::waits_for_ime;
 use super::ui_commands::ui_label;
-use super::*;
+use super::{DesignApp, Value, json};
 
 /// Close document `index` (the active one when `None`) the way the user asks for it: with the
 /// tab's ×, File ▸ Close or its shortcut. A document with unsaved changes asks first, because

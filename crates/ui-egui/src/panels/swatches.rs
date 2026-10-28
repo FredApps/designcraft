@@ -401,7 +401,7 @@ pub fn color_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
         }
         ui.label(egui::RichText::new(&name).size(11.0).color(t.text_dim));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let combo = egui::ComboBox::from_id_salt("color_mode")
+            let combo = craft_ui::ComboBox::from_id_salt("color_mode")
                 .width(64.0)
                 .selected_text(match mode {
                     ColorMode::Cmyk => "CMYK",
@@ -659,6 +659,62 @@ fn thumbnail(p: &egui::Painter, r: egui::Rect, g: &designcraft_color::Gradient, 
     p.rect_stroke(r, 0.0, egui::Stroke::new(1.0, border), egui::StrokeKind::Outside);
 }
 
+/// The gradient across `ramp`, sampled in bands.
+fn paint_ramp(painter: &egui::Painter, ramp: egui::Rect, g: &designcraft_color::Gradient) {
+    let n = 96;
+    for i in 0..n {
+        let (a, b) = (i as f32 / n as f32, (i + 1) as f32 / n as f32);
+        let (c, alpha) = g.sample((a + b) / 2.0);
+        let x0 = ramp.left() + ramp.width() * a;
+        let x1 = ramp.left() + ramp.width() * b + 0.5;
+        painter.rect_filled(egui::Rect::from_x_y_ranges(x0..=x1, ramp.y_range()), 0.0, color32(&c, alpha));
+    }
+}
+
+/// The stops after dragging marker `h` to `o` (`off`: dropped off the ramp, which removes a stop),
+/// and the selection to move to if the drop changed it.
+fn ramp_release(g: &designcraft_color::Gradient, h: RampSel, o: f32, off: bool) -> (Vec<serde_json::Value>, Option<RampSel>) {
+    let mut stops = stops_json(g);
+    let mut sel = None;
+    match h {
+        RampSel::Stop(i) if off => {
+            if i < stops.len() {
+                stops.remove(i);
+            }
+            sel = Some(RampSel::Stop(0));
+        }
+        RampSel::Stop(i) => set_stop(&mut stops, i, "location", json!(o as f64 * 100.0)),
+        RampSel::Mid(i) => set_stop(&mut stops, i, "midpoint", json!(o as f64 * 100.0)),
+    }
+    (stops, sel)
+}
+
+/// Dragging the gradient's thumbnail: its swatch is the payload, and a thumbnail follows the pointer.
+fn drag_gradient_thumbnail(ui: &egui::Ui, resp: &egui::Response, g: &designcraft_color::Gradient, swatch: &str, t: &Tokens) {
+    resp.dnd_set_drag_payload(GradientDrag(swatch.to_string()));
+    if resp.dragged()
+        && let Some(p) = ui.ctx().pointer_interact_pos()
+    {
+        let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("gradient_drag")));
+        thumbnail(&painter, egui::Rect::from_min_size(p + vec2(8.0, 8.0), vec2(18.0, 18.0)), g, t.field_border);
+    }
+}
+
+/// The Gradient panel's Type menu; the kind chosen, as the command's parameters.
+fn gradient_type_combo(ui: &mut egui::Ui, lang: &str, g: &designcraft_color::Gradient, is_gradient: bool) -> Option<serde_json::Value> {
+    let mut send = None;
+    let shown = if is_gradient { crate::i18n::tr(lang, g.kind.label()) } else { "" };
+    let combo = craft_ui::ComboBox::from_id_salt("grad_type").selected_text(crate::rtl::widget(ui, shown)).width(104.0).show_ui(ui, |ui| {
+        for (k, v) in [("Linear", "linear"), ("Radial", "radial")] {
+            if ui.selectable_label(is_gradient && g.kind.label() == k, crate::rtl::widget(ui, crate::i18n::tr(lang, k))).clicked() {
+                send = Some(json!({"kind": v}));
+            }
+        }
+    });
+    let _ = crate::widgets::name_combo(combo, crate::i18n::tr(lang, "Type"));
+    send
+}
+
 /// What's selected on the ramp: a stop, or the midpoint after a stop.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum RampSel {
@@ -722,13 +778,7 @@ pub fn gradient_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
             thumbnail(ui.painter(), r.shrink(1.0), &g, t.field_border);
             // Drag the gradient onto the Swatches panel to keep it as a swatch.
             if is_gradient {
-                resp.dnd_set_drag_payload(GradientDrag(fill.swatch.clone()));
-                if resp.dragged()
-                    && let Some(p) = ui.ctx().pointer_interact_pos()
-                {
-                    let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("gradient_drag")));
-                    thumbnail(&painter, egui::Rect::from_min_size(p + vec2(8.0, 8.0), vec2(18.0, 18.0)), &g, t.field_border);
-                }
+                drag_gradient_thumbnail(ui, &resp, &g, &fill.swatch, &t);
             }
             // Clicking the thumbnail applies the gradient shown (InDesign's way to start one).
             if resp.clicked() && !is_gradient {
@@ -739,19 +789,7 @@ pub fn gradient_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 ui.horizontal(|ui| {
                     crate::widgets::caption_w(ui, crate::i18n::tr(&lang, "Type:"), 52.0);
-                    let shown = if is_gradient { crate::i18n::tr(&lang, g.kind.label()) } else { "" };
-                    let combo =
-                        egui::ComboBox::from_id_salt("grad_type").selected_text(crate::rtl::widget(ui, shown)).width(104.0).show_ui(ui, |ui| {
-                            for (k, v) in [("Linear", "linear"), ("Radial", "radial")] {
-                                if ui
-                                    .selectable_label(is_gradient && g.kind.label() == k, crate::rtl::widget(ui, crate::i18n::tr(&lang, k)))
-                                    .clicked()
-                                {
-                                    send = Some(json!({"kind": v}));
-                                }
-                            }
-                        });
-                    let _ = crate::widgets::name_combo(combo, crate::i18n::tr(&lang, "Type"));
+                    send = gradient_type_combo(ui, &lang, &g, is_gradient).or(send.take());
                 });
                 ui.horizontal(|ui| {
                     crate::widgets::caption_w(ui, crate::i18n::tr(&lang, "Location:"), 52.0);
@@ -792,14 +830,7 @@ pub fn gradient_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
         let (area, resp) = ui.allocate_exact_size(vec2(w, 40.0), Sense::click_and_drag());
         let ramp = egui::Rect::from_min_size(area.min + vec2(6.0, 10.0), vec2(w - 12.0, 14.0));
         let painter = ui.painter();
-        let n = 96;
-        for i in 0..n {
-            let (a, b) = (i as f32 / n as f32, (i + 1) as f32 / n as f32);
-            let (c, alpha) = g.sample((a + b) / 2.0);
-            let x0 = ramp.left() + ramp.width() * a;
-            let x1 = ramp.left() + ramp.width() * b + 0.5;
-            painter.rect_filled(egui::Rect::from_x_y_ranges(x0..=x1, ramp.y_range()), 0.0, color32(&c, alpha));
-        }
+        paint_ramp(painter, ramp, &g);
         painter.rect_stroke(ramp, 0.0, egui::Stroke::new(1.0, t.field_border), egui::StrokeKind::Outside);
         let x_of = |o: f32| ramp.left() + ramp.width() * o;
         let o_of = |x: f32| ((x - ramp.left()) / ramp.width()).clamp(0.0, 1.0);
@@ -854,16 +885,9 @@ pub fn gradient_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
         if resp.drag_stopped()
             && let Some((h, o, off)) = dragging.take()
         {
-            let mut stops = stops_json(&g);
-            match h {
-                RampSel::Stop(i) if off => {
-                    if i < stops.len() {
-                        stops.remove(i);
-                    }
-                    sel = RampSel::Stop(0);
-                }
-                RampSel::Stop(i) => set_stop(&mut stops, i, "location", json!(o as f64 * 100.0)),
-                RampSel::Mid(i) => set_stop(&mut stops, i, "midpoint", json!(o as f64 * 100.0)),
+            let (stops, kept) = ramp_release(&g, h, o, off);
+            if let Some(kept) = kept {
+                sel = kept;
             }
             send = Some(json!({"stops": stops}));
         }

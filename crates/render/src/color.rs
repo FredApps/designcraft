@@ -1,5 +1,5 @@
 use super::types::{Frame, Rendered};
-use super::*;
+use super::{Affine, BlendMode, Compose, DcBlend, Document, Item, Mix, Rect, RenderContext, peniko, vello_cpu};
 
 const CMYK_N: usize = 17;
 

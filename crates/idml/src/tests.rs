@@ -733,6 +733,15 @@ fn kanji_page_numbers() {
 #[test]
 fn imports_hand_written_fixture() {
     let d = import_idml_with(&fixture(), &|_| None).unwrap();
+    assert_fixture_settings_and_pages(&d);
+    assert_fixture_sections_and_layers(&d);
+    assert_fixture_swatches(&d);
+    assert_fixture_styles(&d);
+    assert_fixture_text(&d);
+    assert_fixture_items(&d);
+}
+
+fn assert_fixture_settings_and_pages(d: &Document) {
     assert_eq!(d.title, "Fixture");
     assert!(d.settings.facing_pages);
     assert_eq!((d.settings.page_width, d.settings.page_height), (500.0, 700.0));
@@ -748,12 +757,18 @@ fn imports_hand_written_fixture() {
     assert_eq!(sp.pages[0].parent, Some(d.parents[0].id));
     let info = d.parents[0].parent.as_ref().unwrap();
     assert_eq!((info.prefix.as_str(), info.name.as_str()), ("A", "Parent"));
+}
+
+fn assert_fixture_sections_and_layers(d: &Document) {
     // Sections.
     assert_eq!(d.page_name(0), "v");
     assert_eq!(d.page_name(1), "vi");
     // Layers.
     assert_eq!(d.layers[0].name, "Art");
     assert_eq!(d.layers[0].color, [255, 0, 0]);
+}
+
+fn assert_fixture_swatches(d: &Document) {
     // Swatches.
     assert!(matches!(d.swatch("Brand").unwrap().value, SwatchValue::Color { color_type: designcraft_color::ColorType::Spot, .. }));
     assert!(matches!(&d.swatch("Brand 50%").unwrap().value, SwatchValue::Tint { base, tint } if base == "Brand" && *tint == 0.5));
@@ -767,6 +782,9 @@ fn imports_hand_written_fixture() {
     let mr = &d.parents[0].items[0];
     assert_eq!(mr.fill.swatch, "C=10 M=20 Y=30 K=40");
     assert_eq!(mr.bounds(), Rect::new(20.0, 20.0, 100.0, 50.0));
+}
+
+fn assert_fixture_styles(d: &Document) {
     // Styles.
     let body = d.styles.para("Text/Body").expect("grouped style");
     assert_eq!(body.based_on.as_deref(), Some(st::BASIC_PARAGRAPH));
@@ -774,6 +792,9 @@ fn imports_hand_written_fixture() {
     assert_eq!(body.chars.leading, Some(designcraft_doc::Leading::Points(13.0)));
     assert_eq!(body.para.align, Some(designcraft_doc::Align::LeftJustified));
     assert_eq!(d.styles.char_style("Strong").unwrap().chars.font_style.as_deref(), Some("Bold"));
+}
+
+fn assert_fixture_text(d: &Document) {
     // Frames, threads, text.
     let story = d.stories.values().next().unwrap();
     assert_eq!(story.text, format!("Hello & bold\nPage {}\tend{}\nafter", st::PAGE_NUMBER, st::FRAME_BREAK));
@@ -791,6 +812,10 @@ fn imports_hand_written_fixture() {
     let o = &f1.text_frame().unwrap().options;
     assert_eq!((o.columns, o.gutter, o.inset), (2, 8.0, [1.0, 2.0, 3.0, 4.0]));
     assert_eq!(d.item(story.frames[1]).unwrap().bounds(), Rect::new(550.0, 50.0, 650.0, 150.0));
+}
+
+fn assert_fixture_items(d: &Document) {
+    let sp = &d.spreads[0];
     // Group child keeps its own transform relative to the group.
     let g = sp.items.iter().find(|i| i.shape == Shape::Group).unwrap();
     assert_eq!(g.bounds(), Rect::new(510.0, 370.0, 560.0, 420.0));
@@ -2431,7 +2456,20 @@ fn fixture_with_table_styles(styles: &str, story: &str) -> Vec<u8> {
 fn table_style_cascade_preserves_sparse_edges_and_local_overrides() {
     let d = import_idml(&fixture_with_table_styles(CASCADE_STYLES, CASCADE_STORY)).unwrap();
     d.check().unwrap();
-    let table = d.stories.values().flat_map(|s| s.tables.values()).next().unwrap();
+    let table = first_table(&d);
+    assert_cascade_table_options(table);
+    assert_cascade_header_cell(table);
+    assert_cascade_explicit_cell(table);
+    assert_cascade_local_cell(table);
+    assert_cascade_body_cells(table);
+    assert_cascade_round_trip(&d, table);
+}
+
+fn first_table(doc: &Document) -> &designcraft_doc::Table {
+    doc.stories.values().flat_map(|s| s.tables.values()).next().unwrap()
+}
+
+fn assert_cascade_table_options(table: &designcraft_doc::Table) {
     assert_eq!((table.nrows(), table.ncols()), (2, 3));
     assert_eq!(table.style, "Table");
     assert_eq!(table.options.space_before, 19.0);
@@ -2440,6 +2478,9 @@ fn table_style_cascade_preserves_sparse_edges_and_local_overrides() {
     let fills = table.options.alt_rows.as_ref().unwrap();
     assert_eq!((fills.first, fills.next, fills.first_tint), (1, 1, 0.2));
     assert_eq!(fills.first_color, "Brand");
+}
+
+fn assert_cascade_header_cell(table: &designcraft_doc::Table) {
     let header = table.cell(0, 0).unwrap();
     assert_eq!(header.fill, designcraft_color::swatch::PAPER, "header takes precedence over left region");
     assert!(header.style.is_empty(), "a table region does not become AppliedCellStyle");
@@ -2453,6 +2494,9 @@ fn table_style_cascade_preserves_sparse_edges_and_local_overrides() {
     assert_eq!(header.border_overrides, [true; 4]);
     assert_eq!(header.stroke_defined, [true; 4]);
     assert_eq!(header.stroke_priorities, [0; 4]);
+}
+
+fn assert_cascade_explicit_cell(table: &designcraft_doc::Table) {
     let explicit = table.cell(0, 1).unwrap();
     assert_eq!(explicit.fill, "Brand");
     assert_eq!(explicit.fill_tint, 0.75);
@@ -2461,6 +2505,9 @@ fn table_style_cascade_preserves_sparse_edges_and_local_overrides() {
     assert_eq!(explicit.strokes[0].color, designcraft_color::swatch::NONE);
     assert_eq!(explicit.strokes[3].weight, 5.0);
     assert_eq!(explicit.strokes[3].tint, 0.3);
+}
+
+fn assert_cascade_local_cell(table: &designcraft_doc::Table) {
     let local = table.cell(0, 2).unwrap();
     assert_eq!(local.fill, designcraft_color::swatch::NONE);
     assert_eq!(local.fill_tint, 0.0);
@@ -2470,13 +2517,18 @@ fn table_style_cascade_preserves_sparse_edges_and_local_overrides() {
     assert_eq!(local.strokes[3].color, designcraft_color::swatch::NONE);
     assert_eq!(local.stroke_priorities, [0, 0, 0, 7]);
     assert_eq!(local.text.paras[0].style, st::BASIC_PARAGRAPH, "explicit paragraph style wins");
+}
+
+fn assert_cascade_body_cells(table: &designcraft_doc::Table) {
     assert_eq!(table.cell(1, 0).unwrap().fill, designcraft_color::swatch::BLACK);
     assert_eq!(table.cell(1, 0).unwrap().strokes[1].weight, 0.0);
     assert_eq!(table.cell(1, 1).unwrap().fill_tint, 0.5);
     assert_eq!(table.cell(1, 2).unwrap().fill, "Brand");
+}
 
-    let back = import_idml(&export_idml(&d)).unwrap();
-    let roundtrip = back.stories.values().flat_map(|s| s.tables.values()).next().unwrap();
+fn assert_cascade_round_trip(d: &Document, table: &designcraft_doc::Table) {
+    let back = import_idml(&export_idml(d)).unwrap();
+    let roundtrip = first_table(&back);
     for (before, after) in table.cells.iter().zip(&roundtrip.cells) {
         assert_eq!(after.strokes, before.strokes);
         assert_eq!(after.border_overrides, before.border_overrides);
@@ -3000,14 +3052,22 @@ fn kenten_shatai_and_grid_settings_import_and_round_trip() {
 
 #[test]
 fn ruby_settings_import_from_idml_and_round_trip() {
-    use designcraft_doc::cjk_settings::AdornmentOverprint;
-    use designcraft_doc::ruby::{RubyAlignment, RubyOverhang, RubyParentSpacing, RubyPosition, RubyType};
     // InDesign's names: RubyFlag is a number, colours and fonts are properties.
     let story = r#"<idPkg:Story xmlns:idPkg="http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging"><Story Self="s1">
       <ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/$ID/[No paragraph style]">
         <CharacterStyleRange AppliedCharacterStyle="CharacterStyle/$ID/[No character style]" RubyFlag="1" RubyString="かん　じ" RubyType="PerCharacterRuby" RubyAlignment="RubyCenter" RubyPosition="BelowLeft" RubyYOffset="-1.4173228" RubyFontSize="-1" RubyXScale="90" RubyParentOverhangAmount="RubyOverhangNoLimit" RubyParentSpacing="RubyParentBothSides" RubyAutoAlign="false" RubyAutoScaling="true" RubyParentScalingPercent="40" RubyAutoTcyDigits="2" RubyTint="-1" RubyOverprintFill="Auto"><Properties><RubyFont type="string">$ID/</RubyFont><RubyFontStyle type="enumeration">Nothing</RubyFontStyle><RubyFill type="string">Text Color</RubyFill></Properties><Content>漢字</Content></CharacterStyleRange>
       </ParagraphStyleRange></Story></idPkg:Story>"#;
-    let doc = import_idml(&fixture_with_story(story)).unwrap();
+    let imported = import_idml(&fixture_with_story(story)).unwrap();
+    assert_imported_ruby_settings(&imported);
+
+    let doc = ruby_round_trip_document();
+    let back = import_idml(&export_idml(&doc)).unwrap();
+    assert_ruby_round_trip(&doc, &back);
+}
+
+fn assert_imported_ruby_settings(doc: &Document) {
+    use designcraft_doc::cjk_settings::AdornmentOverprint;
+    use designcraft_doc::ruby::{RubyAlignment, RubyOverhang, RubyParentSpacing, RubyPosition, RubyType};
     let a = doc.stories.values().find(|s| s.text.contains("漢字")).unwrap().runs().next().unwrap().1.over.clone();
     assert_eq!(a.ruby.as_deref(), Some("かん　じ"));
     assert_eq!(a.ruby_type, Some(RubyType::PerCharacter));
@@ -3022,8 +3082,11 @@ fn ruby_settings_import_from_idml_and_round_trip() {
     assert_eq!(a.ruby_auto_tcy_digits, Some(2));
     assert_eq!((a.ruby_font.as_deref(), a.ruby_font_style.as_deref(), a.ruby_fill.as_deref()), (Some(""), Some(""), Some("")));
     assert_eq!((a.ruby_fill_tint, a.ruby_overprint_fill), (Some(None), Some(AdornmentOverprint::Auto)));
+}
 
-    // Every setting survives export and import.
+fn ruby_round_trip_document() -> Document {
+    use designcraft_doc::cjk_settings::AdornmentOverprint;
+    use designcraft_doc::ruby::{RubyAlignment, RubyOverhang, RubyParentSpacing, RubyPosition, RubyType};
     let mut d = Document::new(&NewDocument::default());
     let lid = d.default_layer();
     let (_, sid) = d.add_text_frame(SpreadRef::Doc(0), Rect::new(72.0, 72.0, 300.0, 200.0), lid, "漢字", ParaFormat::default()).unwrap();
@@ -3058,8 +3121,11 @@ fn ruby_settings_import_from_idml_and_round_trip() {
         o.ruby_overprint_fill = Some(AdornmentOverprint::On);
         o.ruby_overprint_stroke = Some(AdornmentOverprint::Off);
     });
-    let a = d.stories[&sid].runs().next().unwrap().1.over.clone();
-    let back = import_idml(&export_idml(&d)).unwrap();
+    d
+}
+
+fn assert_ruby_round_trip(d: &Document, back: &Document) {
+    let a = d.stories.values().find(|s| s.text.contains("漢字")).unwrap().runs().next().unwrap().1.over.clone();
     let b = back.stories.values().find(|s| s.text.contains("漢字")).unwrap().runs().next().unwrap().1.over.clone();
     macro_rules! same {
         ($($f:ident),*) => { $( assert_eq!(a.$f, b.$f, stringify!($f)); )* };

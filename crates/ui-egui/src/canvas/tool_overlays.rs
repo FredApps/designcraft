@@ -1,7 +1,7 @@
 use super::frames::{item_canvas_xf, selection_color};
 use super::page_decor::dashed;
 use super::render::c32;
-use super::*;
+use super::{CanvasLayout, Color32, Content, DesignApp, Document, Overlay, Point, Pos2, Rect, Stroke, StrokeKind, Tokens, Xf, pos2, vec2};
 
 pub(super) fn draw_tool_overlays(app: &mut DesignApp, painter: &egui::Painter, xf: &Xf) {
     if let (Some((z, c)), Some(rect)) = (app.power_zoom, app.canvas_rect) {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, SpreadId, Value, bad, json};
 
 /// A parent spread named by prefix, label (`A-Parent`) or index.
 pub(super) fn parent_spread_index(d: &designcraft_doc::Document, v: &Value) -> Option<usize> {
@@ -399,7 +399,7 @@ mod parent_base_tests {
         rr.threads = 0;
         let placed = [designcraft_render::Placed { spread: designcraft_doc::SpreadRef::Parent(1), xf: designcraft_geom::Affine::IDENTITY }];
         let opts = designcraft_render::RenderOptions { background: Some([255, 255, 255, 255]), ..Default::default() };
-        let img = rr.render(&s.doc().unwrap().doc, &s.cache, &placed, 400, 400, designcraft_geom::Affine::IDENTITY, &opts);
+        let img = rr.render(&s.doc().unwrap().doc, &s.cache, &placed, (400, 400), designcraft_geom::Affine::IDENTITY, &opts);
         assert!(black(img.pixel(50, 100)) && cyan(img.pixel(150, 150)), "{:?} {:?}", img.pixel(50, 100), img.pixel(150, 150));
         let inspect = s.execute("document.inspect", &json!({})).unwrap();
         assert_eq!(inspect["parents"][1]["basedOn"], "A-Parent");

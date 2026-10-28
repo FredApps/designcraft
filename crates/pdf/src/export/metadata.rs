@@ -1,4 +1,4 @@
-use super::*;
+use super::{Document, Metadata, krilla};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn now_unix() -> Option<i64> {

@@ -1,5 +1,5 @@
 use super::values::tint;
-use super::*;
+use super::{BaselineGrid, El, GridRelative, Importer, PARA_BUILTINS, names};
 
 /// IDML stores a sort key on each topic, rather than on its page references.
 #[derive(Clone, Default)]

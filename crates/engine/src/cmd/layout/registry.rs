@@ -3,7 +3,7 @@ use super::margins::{adjust_layout, column_guides_unlocked, margin_boxes, move_c
 use super::pages::{document_setup, page_options, page_size};
 use super::parents::{parent_options, parent_ref, parent_spread_index};
 use super::sections::{ChapterEdit, SectionEdit, chapter_numbering, start_number};
-use super::*;
+use super::{CommandSpec, LAYER_COLORS, Layer, LayerId, Margins, SpreadId, Value, bad, cmd, has_doc, json, ok, str_param};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![

@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlendMode, Deserialize, Serialize, is_default};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]

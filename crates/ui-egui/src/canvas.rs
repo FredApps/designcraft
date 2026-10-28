@@ -133,6 +133,81 @@ impl Xf {
     }
 }
 
+/// A guide being dragged out or moved: its line, what caught it, and where it is beside the pointer (#1282).
+fn draw_guide_drag(app: &DesignApp, painter: &egui::Painter, xf: &Xf, g: &GuideDrag, p: Pos2, rect: Rect, t: &Tokens) {
+    let col = Color32::from_rgb(74, 227, 255);
+    let spot = guide_spot(app, xf, g);
+    let line = spot.as_ref().map_or(p, |s| s.screen);
+    let (a, b) = match g.orientation {
+        designcraft_doc::Orientation::Horizontal => (pos2(rect.min.x, line.y), pos2(rect.max.x, line.y)),
+        designcraft_doc::Orientation::Vertical => (pos2(line.x, rect.min.y), pos2(line.x, rect.max.y)),
+    };
+    // What caught it, as for a moved object.
+    for mark in spot.iter().flat_map(|s| &s.marks) {
+        if let Overlay::Guide { a, b } = mark {
+            painter.line_segment([xf.to_screen(*a), xf.to_screen(*b)], Stroke::new(1.0, t.smart_guide));
+        }
+    }
+    // A new guide from the rulers with the Page tool is a liquid guide: dashed.
+    if g.from.is_none() && app.session.tool_id() == "page" {
+        dashed(painter, a, b, Stroke::new(1.0, col), 6.0, 3.0);
+    } else {
+        painter.line_segment([a, b], Stroke::new(1.0, col));
+    }
+    // Where it is, beside the pointer (#1282).
+    if let Some(text) = guide_readout(app, xf, g) {
+        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), t.text);
+        let at = readout_at(p, galley.size(), rect);
+        let bg = Rect::from_min_size(at, galley.size()).expand(3.0);
+        painter.rect_filled(bg, 2.0, t.panel);
+        painter.rect_stroke(bg, 2.0, Stroke::new(1.0, t.border), StrokeKind::Inside);
+        painter.galley(at, galley, t.text);
+    }
+}
+
+/// The rendered texture, placed where its region is in the current view.
+fn paint_render(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document, layout: &CanvasLayout, screen: Rect, preview: bool) {
+    if let (Some(tex), Some(sh)) = (&app.canvas.texture, app.canvas.shown) {
+        // Place the texture where its region is in the current view (shifted while panning,
+        // scaled while a zoom re-render is pending).
+        // The texture's corners in canvas space, placed through the view (rotation included).
+        let (w, h) = (sh.size.0 as f64 / sh.zoom, sh.size.1 as f64 / sh.zoom);
+        let o = sh.origin;
+        let corners = [
+            (o, pos2(0.0, 0.0)),
+            (Point::new(o.x + w, o.y), pos2(1.0, 0.0)),
+            (Point::new(o.x + w, o.y + h), pos2(1.0, 1.0)),
+            (Point::new(o.x, o.y + h), pos2(0.0, 1.0)),
+        ];
+        let mut mesh = egui::Mesh::with_texture(tex.id());
+        for (c, uv) in corners {
+            mesh.vertices.push(egui::epaint::Vertex { pos: xf.to_screen(c), uv, color: Color32::WHITE });
+        }
+        mesh.indices.extend([0, 1, 2, 0, 2, 3]);
+        if preview {
+            // Preview: only the shown area of each spread keeps its content.
+            for slot in &layout.slots {
+                let r = shown_area(app, doc, xf, slot);
+                painter.with_clip_rect(r.intersect(screen)).add(egui::Shape::mesh(mesh.clone()));
+            }
+        } else {
+            painter.add(egui::Shape::mesh(mesh));
+        }
+    }
+}
+
+/// Presentation: a click shows the next spread, Shift-click the previous one.
+fn present_click(app: &mut DesignApp, ui: &egui::Ui, resp: &egui::Response, rect: Rect) {
+    if resp.clicked() {
+        // The release that made the click says whether Shift was down.
+        let shift = ui.input(|i| {
+            i.modifiers.shift || i.events.iter().any(|e| matches!(e, egui::Event::PointerButton { pressed: false, modifiers, .. } if modifiers.shift))
+        });
+        step_spread(app, if shift { -1 } else { 1 });
+        present_fit(app, rect);
+    }
+}
+
 /// Lay out the canvas, scrollbars and rulers, presentation mode, fit/view state, input handling and painting.
 pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
@@ -152,15 +227,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
         // One spread at a time, as large as the screen allows; a click shows the next one,
         // Shift-click the previous one. Tools and selection don't see the input.
         present_fit(app, rect);
-        if resp.clicked() {
-            // The release that made the click says whether Shift was down.
-            let shift = ui.input(|i| {
-                i.modifiers.shift
-                    || i.events.iter().any(|e| matches!(e, egui::Event::PointerButton { pressed: false, modifiers, .. } if modifiers.shift))
-            });
-            step_spread(app, if shift { -1 } else { 1 });
-            present_fit(app, rect);
-        }
+        present_click(app, ui, &resp, rect);
     } else {
         if !app.view().is_some_and(|v| v.fitted) {
             fit(app, rect, "spread");
@@ -201,33 +268,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     }
     // Rendered content.
     render_texture(app, ui.ctx(), rect, &xf, &layout, preview);
-    if let (Some(tex), Some(sh)) = (&app.canvas.texture, app.canvas.shown) {
-        // Place the texture where its region is in the current view (shifted while panning,
-        // scaled while a zoom re-render is pending).
-        // The texture's corners in canvas space, placed through the view (rotation included).
-        let (w, h) = (sh.size.0 as f64 / sh.zoom, sh.size.1 as f64 / sh.zoom);
-        let o = sh.origin;
-        let corners = [
-            (o, pos2(0.0, 0.0)),
-            (Point::new(o.x + w, o.y), pos2(1.0, 0.0)),
-            (Point::new(o.x + w, o.y + h), pos2(1.0, 1.0)),
-            (Point::new(o.x, o.y + h), pos2(0.0, 1.0)),
-        ];
-        let mut mesh = egui::Mesh::with_texture(tex.id());
-        for (c, uv) in corners {
-            mesh.vertices.push(egui::epaint::Vertex { pos: xf.to_screen(c), uv, color: Color32::WHITE });
-        }
-        mesh.indices.extend([0, 1, 2, 0, 2, 3]);
-        if preview {
-            // Preview: only the shown area of each spread keeps its content.
-            for slot in &layout.slots {
-                let r = shown_area(app, &doc, &xf, slot);
-                painter.with_clip_rect(r.intersect(screen)).add(egui::Shape::mesh(mesh.clone()));
-            }
-        } else {
-            painter.add(egui::Shape::mesh(mesh));
-        }
-    }
+    paint_render(app, &painter, &xf, &doc, &layout, screen, preview);
     crate::separations::paint(app, ui.ctx(), &painter, &xf, &layout, screen);
     let hair = 1.0 / ui.ctx().pixels_per_point();
     for slot in &layout.slots {
@@ -241,34 +282,7 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
         if let Some(g) = drag
             && let Some(p) = g.at
         {
-            let col = Color32::from_rgb(74, 227, 255);
-            let spot = guide_spot(app, &xf, &g);
-            let line = spot.as_ref().map_or(p, |s| s.screen);
-            let (a, b) = match g.orientation {
-                designcraft_doc::Orientation::Horizontal => (pos2(rect.min.x, line.y), pos2(rect.max.x, line.y)),
-                designcraft_doc::Orientation::Vertical => (pos2(line.x, rect.min.y), pos2(line.x, rect.max.y)),
-            };
-            // What caught it, as for a moved object.
-            for mark in spot.iter().flat_map(|s| &s.marks) {
-                if let Overlay::Guide { a, b } = mark {
-                    painter.line_segment([xf.to_screen(*a), xf.to_screen(*b)], Stroke::new(1.0, t.smart_guide));
-                }
-            }
-            // A new guide from the rulers with the Page tool is a liquid guide: dashed.
-            if g.from.is_none() && app.session.tool_id() == "page" {
-                dashed(&painter, a, b, Stroke::new(1.0, col), 6.0, 3.0);
-            } else {
-                painter.line_segment([a, b], Stroke::new(1.0, col));
-            }
-            // Where it is, beside the pointer (#1282).
-            if let Some(text) = guide_readout(app, &xf, &g) {
-                let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), t.text);
-                let at = readout_at(p, galley.size(), rect);
-                let bg = Rect::from_min_size(at, galley.size()).expand(3.0);
-                painter.rect_filled(bg, 2.0, t.panel);
-                painter.rect_stroke(bg, 2.0, Stroke::new(1.0, t.border), StrokeKind::Inside);
-                painter.galley(at, galley, t.text);
-            }
+            draw_guide_drag(app, &painter, &xf, &g, p, rect, &t);
         }
         draw_frames(app, &painter, &xf, &doc, &layout);
         if app.ui.hidden_characters {

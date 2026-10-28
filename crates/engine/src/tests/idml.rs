@@ -30,6 +30,13 @@ fn magazine_round_trips_through_idml() {
     assert_eq!(back.page_count(), d.page_count());
     assert_eq!(back.spreads.len(), d.spreads.len());
     assert_eq!(back.parents.len(), d.parents.len());
+    assert_magazine_stories(&d, &back);
+    assert_magazine_styles(&d, &back);
+    assert_magazine_geometry(&d, &back);
+    assert_magazine_assets(&d, &back);
+}
+
+fn assert_magazine_stories(d: &Document, back: &Document) {
     // Stories: same text in the same order, same styles applied.
     let ta: Vec<&str> = d.stories.values().map(|s| s.text.as_str()).collect();
     let tb: Vec<&str> = back.stories.values().map(|s| s.text.as_str()).collect();
@@ -48,6 +55,9 @@ fn magazine_round_trips_through_idml() {
             assert_eq!(pa.para, pb.para);
         }
     }
+}
+
+fn assert_magazine_styles(d: &Document, back: &Document) {
     // Styles and swatches by name.
     for s in &d.styles.paragraph {
         let b = back.styles.para(&s.name).unwrap_or_else(|| panic!("paragraph style {}", s.name));
@@ -64,6 +74,9 @@ fn magazine_round_trips_through_idml() {
         let b = back.swatch(&s.name).unwrap_or_else(|| panic!("swatch {}", s.name));
         assert_eq!(b.value, s.value, "{}", s.name);
     }
+}
+
+fn assert_magazine_geometry(d: &Document, back: &Document) {
     // Frame geometry (document and parent spreads), pages.
     for (sa, sb) in [(&d.spreads, &back.spreads), (&d.parents, &back.parents)] {
         let (ia, ib) = (items(sa), items(sb));
@@ -78,8 +91,11 @@ fn magazine_round_trips_through_idml() {
         }
     }
     // Threads: the same frames in the same order.
-    assert_eq!(positions(&d), positions(&back));
+    assert_eq!(positions(d), positions(back));
     assert!(back.stories.values().any(|s| s.frames.len() == 2));
+}
+
+fn assert_magazine_assets(d: &Document, back: &Document) {
     // Images are embedded.
     assert_eq!(back.assets.len(), d.assets.len());
     for (a, b) in d.assets.values().zip(back.assets.values()) {
@@ -87,7 +103,7 @@ fn magazine_round_trips_through_idml() {
         assert_eq!(a.pixels, b.pixels);
     }
     // A second round trip is stable.
-    let again = designcraft_idml::import_idml(&designcraft_idml::export_idml(&back)).unwrap();
+    let again = designcraft_idml::import_idml(&designcraft_idml::export_idml(back)).unwrap();
     assert_eq!(items(&again.spreads).len(), items(&back.spreads).len());
 }
 
