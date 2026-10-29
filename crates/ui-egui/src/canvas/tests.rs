@@ -36,7 +36,7 @@ fn canvas_shapes(app: &mut DesignApp) -> Vec<egui::epaint::ClippedShape> {
 /// The spine-coloured vertical hairlines at screen x `x` that run the full height of `page`
 /// (the spine of one spread shares its x with the pages of the spreads above and below it).
 fn vertical_lines_at(shapes: &[egui::epaint::ClippedShape], x: f32, page: Rect) -> usize {
-    let spine = Tokens::get(&egui::Context::default()).text_dim;
+    let spine = page_decor::PAGE_EDGE;
     shapes
         .iter()
         .filter(|c| match &c.shape {

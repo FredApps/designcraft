@@ -10,6 +10,10 @@ pub(super) fn dashed(painter: &egui::Painter, a: Pos2, b: Pos2, stroke: Stroke, 
     painter.extend(egui::Shape::dashed_line(&[a, b], stroke, dash, gap));
 }
 
+/// The hairline around each spread and at its spine, where its pages meet: one dark grey on any
+/// paper colour and in either theme, so the binding edge reads like the spread's own edge.
+pub(super) const PAGE_EDGE: Color32 = Color32::from_rgb(0x4a, 0x4a, 0x4a);
+
 /// The most baseline grid lines drawn on a page: one per point of the tallest page (216 in).
 pub(super) const MAX_BASELINES: usize = 216 * 72;
 
@@ -52,7 +56,7 @@ pub(super) fn draw_guides(
         let Some(sp) = doc.spread(slot.spread) else { continue };
         if app.ui.guides {
             draw_bleed_and_slug(painter, xf, doc, slot, sp);
-            draw_spine(painter, xf, slot, sp, t);
+            draw_spine(painter, xf, slot, sp);
         }
         let pasteboard = slot.xf.inverse().transform_rect_bbox(layout.pasteboard);
         for (pi, p) in sp.pages.iter().enumerate() {
@@ -66,6 +70,7 @@ pub(super) fn draw_guides(
             draw_page_guides(&cx, (pi, p, pr), moving, &selection);
         }
     }
+    let _ = t;
 }
 
 /// The bleed and slug outlines of a spread, in their own colours.
@@ -81,9 +86,10 @@ fn draw_bleed_and_slug(painter: &egui::Painter, xf: &Xf, doc: &Document, slot: &
     }
 }
 
-/// The spine: a hairline where the pages of a spread meet, the full height of the taller page.
-/// Screen only, like the other guides; the paper is one rectangle and exports never show a seam.
-fn draw_spine(painter: &egui::Painter, xf: &Xf, slot: &SpreadSlot, sp: &designcraft_doc::Spread, t: &Tokens) {
+/// The spine: a hairline where the pages of a spread meet, the full height of the taller page, in
+/// the spread edge's colour ([`PAGE_EDGE`]). Screen only, like the other guides; the paper is one
+/// rectangle and exports never show a seam.
+fn draw_spine(painter: &egui::Painter, xf: &Xf, slot: &SpreadSlot, sp: &designcraft_doc::Spread) {
     let pt = |p: Point| xf.to_screen(slot.xf * p);
     for pair in sp.pages.windows(2) {
         // Bound right to left, a spread lists its right page first: take the two edges that
@@ -92,7 +98,7 @@ fn draw_spine(painter: &egui::Painter, xf: &Xf, slot: &SpreadSlot, sp: &designcr
         let (left, right) = if a.x0 <= b.x0 { (a, b) } else { (b, a) };
         let x = (left.x1 + right.x0) / 2.0;
         let (y0, y1) = (a.y0.min(b.y0), a.y1.max(b.y1));
-        painter.line_segment([pt(Point::new(x, y0)), pt(Point::new(x, y1))], Stroke::new(hair(painter), t.text_dim));
+        painter.line_segment([pt(Point::new(x, y0)), pt(Point::new(x, y1))], Stroke::new(hair(painter), PAGE_EDGE));
     }
 }
 
