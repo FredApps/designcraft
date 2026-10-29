@@ -58,8 +58,7 @@ fn scope_hit(s: &mut Session, p: &serde_json::Value, sid: designcraft_doc::Story
     assert_eq!((selected.story, selected.range(), selected.cell), (sid, a..b, None));
 }
 
-#[test]
-fn find_scope_first_change_stops_after_first_matching_story_and_repairs_selection() {
+fn assert_document_change_scenarios() {
     for (texts, first, explicit, grep, expected, count) in [
         (vec!["red red", "red"], Some(true), false, false, vec!["blue red", "red"], 1),
         (vec!["keep", "red red", "red"], Some(true), false, false, vec!["keep", "blue red", "red"], 1),
@@ -119,6 +118,11 @@ fn find_scope_first_change_stops_after_first_matching_story_and_repairs_selectio
         }
         st.doc.check().unwrap();
     }
+}
+
+#[test]
+fn find_scope_first_change_stops_after_first_matching_story_and_repairs_selection() {
+    assert_document_change_scenarios();
 
     // Identical replacement is still one counted match, not a reason to visit another story.
     let (mut s, sid) = scope_session("red red");

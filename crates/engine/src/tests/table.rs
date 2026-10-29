@@ -911,100 +911,115 @@ fn split_selected_row_or_column_splits_both_cells() {
 fn split_selected_block_and_merged_cells_preserves_geometry_and_history() {
     for horizontal in [true, false] {
         for merged in [false, true] {
-            let (mut s, sid, _) = session_with_frame();
-            let tid = s.execute("table.insert", &json!({"rows": 4, "cols": 4, "width": 240})).unwrap()["table"].as_u64().unwrap();
-            s.execute("table.setRowHeight", &json!({"table": tid, "height": 60, "mode": "exactly"})).unwrap();
-            s.execute("style.cell.create", &json!({"name": "Neighbor", "fill": "[Paper]", "insets": 3})).unwrap();
-            s.execute("style.cell.create", &json!({"name": "Chosen", "fill": "[Black]", "tint": 0.15, "insets": 2})).unwrap();
-            s.execute("style.cell.apply", &json!({"table": tid, "name": "Neighbor"})).unwrap();
-            for r in 0..4 {
-                for c in 0..4 {
-                    s.execute("table.setCell", &json!({"row": r, "col": c, "text": format!("{r},{c}")})).unwrap();
-                }
-            }
-            let range = if !merged {
-                doc::CellRange::new(1, 1, 2, 2)
-            } else if horizontal {
-                doc::CellRange::new(0, 0, 2, 1)
-            } else {
-                doc::CellRange::new(0, 0, 1, 2)
-            };
-            let selection = json!({"rows": [range.r0, range.r1], "cols": [range.c0, range.c1]});
-            s.execute("table.select", &selection).unwrap();
-            s.execute("style.cell.apply", &json!({"name": "Chosen"})).unwrap();
-            if merged {
-                let merge = if horizontal { json!({"rows": [0, 2], "cols": [1, 1]}) } else { json!({"rows": [1, 1], "cols": [0, 2]}) };
-                s.execute("table.merge", &merge).unwrap();
-                s.execute("table.select", &selection).unwrap();
-            }
-            let before_doc = s.doc().unwrap().doc.clone();
-            let before_selection = s.doc().unwrap().selection.clone();
-            let before = table_for(&s, sid, tid).clone();
-            let before_layout = s.cache.get(&before_doc, doc::StoryId(sid), None);
-            let before_fragment = before_layout.frames.iter().flat_map(|f| &f.tables).find(|t| t.table == tid).unwrap();
-            let undo_len = s.doc().unwrap().history.undo.len();
-            let command = if horizontal { "table.splitHorizontally" } else { "table.splitVertically" };
-            s.execute(command, &json!({})).unwrap();
-            assert_eq!(s.doc().unwrap().history.undo.len(), undo_len + 1, "one split command creates one undo entry");
-            let after_doc = s.doc().unwrap().doc.clone();
-            let after_selection = s.doc().unwrap().selection.clone();
-            let after = table_for(&s, sid, tid).clone();
-            let after_layout = s.cache.get(&after_doc, doc::StoryId(sid), None);
-            let after_fragment = after_layout.frames.iter().flat_map(|f| &f.tables).find(|t| t.table == tid).unwrap();
-            assert_eq!(after_fragment.rect, before_fragment.rect, "splitting does not resize the table");
-            assert_eq!(after_fragment.cells.len(), before_fragment.cells.len() + 4, "four original owners split once");
-            for placed in &before_fragment.cells {
-                let original = before.cell(placed.row, placed.col).unwrap();
-                let matches: Vec<_> = after_fragment.cells.iter().filter(|c| c.source == placed.source).collect();
-                assert_eq!(matches.len(), 1, "original cell text survives once: {}", placed.source);
-                let surviving = matches[0];
-                let cell = after.cell(surviving.row, surviving.col).unwrap();
-                let mut normalized = cell.clone();
-                normalized.row_span = original.row_span;
-                normalized.col_span = original.col_span;
-                assert_eq!(&normalized, original, "existing cell text and formatting are preserved");
-                if !range.contains(placed.row, placed.col) {
-                    assert_eq!(surviving.rect, placed.rect, "unselected neighbor geometry is unchanged");
-                    continue;
-                }
-                let second_addr = if horizontal {
-                    (surviving.row + cell.row_span as usize, surviving.col)
-                } else {
-                    (surviving.row, surviving.col + cell.col_span as usize)
-                };
-                let second = after.cell(second_addr.0, second_addr.1).unwrap();
-                assert_eq!(after.owner(second_addr.0, second_addr.1), second_addr);
-                assert!(second.text.is_empty());
-                assert_eq!(second.style, original.style);
-                assert_eq!(second.insets, original.insets);
-                assert_eq!(second.fill, original.fill);
-                assert_eq!(second.fill_tint, original.fill_tint);
-                let second_rect = after_fragment.cell(second_addr.0, second_addr.1).unwrap().rect;
-                assert_eq!(surviving.rect.union(second_rect), placed.rect, "the halves exactly cover the original cell");
-                if horizontal {
-                    assert_eq!(surviving.rect.y1, second_rect.y0);
-                } else {
-                    assert_eq!(surviving.rect.x1, second_rect.x0);
-                }
-            }
-            let text = s.doc().unwrap().selection.text.unwrap();
-            let address = text.cell.unwrap();
-            assert_eq!(after.owner(address.row, address.col), (address.row, address.col));
-            assert!(text.focus <= after.cell(address.row, address.col).unwrap().text.len());
-            let cells = s.doc().unwrap().selection.cells.unwrap();
-            assert!(cells.range.r1 < after.nrows() && cells.range.c1 < after.ncols());
-            check(&s);
-            s.execute("edit.undo", &json!({})).unwrap();
-            assert!(std::sync::Arc::ptr_eq(&s.doc().unwrap().doc, &before_doc));
-            assert_eq!(s.doc().unwrap().selection, before_selection);
-            assert_eq!(s.doc().unwrap().history.undo.len(), undo_len);
-            s.execute("edit.redo", &json!({})).unwrap();
-            assert!(std::sync::Arc::ptr_eq(&s.doc().unwrap().doc, &after_doc));
-            assert_eq!(s.doc().unwrap().selection, after_selection);
-            let bytes = crate::cmd::file_bytes(&s.doc().unwrap().doc).unwrap();
-            let reopened = crate::cmd::file_from(&bytes).unwrap();
-            reopened.check().unwrap();
-            assert_eq!(reopened.story(doc::StoryId(sid)).unwrap().tables.get(&tid).unwrap().as_ref(), &after);
+            assert_split_case(horizontal, merged);
+        }
+    }
+}
+
+fn assert_split_case(horizontal: bool, merged: bool) {
+    let (mut s, sid, _) = session_with_frame();
+    let tid = s.execute("table.insert", &json!({"rows": 4, "cols": 4, "width": 240})).unwrap()["table"].as_u64().unwrap();
+    s.execute("table.setRowHeight", &json!({"table": tid, "height": 60, "mode": "exactly"})).unwrap();
+    s.execute("style.cell.create", &json!({"name": "Neighbor", "fill": "[Paper]", "insets": 3})).unwrap();
+    s.execute("style.cell.create", &json!({"name": "Chosen", "fill": "[Black]", "tint": 0.15, "insets": 2})).unwrap();
+    s.execute("style.cell.apply", &json!({"table": tid, "name": "Neighbor"})).unwrap();
+    for r in 0..4 {
+        for c in 0..4 {
+            s.execute("table.setCell", &json!({"row": r, "col": c, "text": format!("{r},{c}")})).unwrap();
+        }
+    }
+    let range = if !merged {
+        doc::CellRange::new(1, 1, 2, 2)
+    } else if horizontal {
+        doc::CellRange::new(0, 0, 2, 1)
+    } else {
+        doc::CellRange::new(0, 0, 1, 2)
+    };
+    let selection = json!({"rows": [range.r0, range.r1], "cols": [range.c0, range.c1]});
+    s.execute("table.select", &selection).unwrap();
+    s.execute("style.cell.apply", &json!({"name": "Chosen"})).unwrap();
+    if merged {
+        let merge = if horizontal { json!({"rows": [0, 2], "cols": [1, 1]}) } else { json!({"rows": [1, 1], "cols": [0, 2]}) };
+        s.execute("table.merge", &merge).unwrap();
+        s.execute("table.select", &selection).unwrap();
+    }
+    let before_doc = s.doc().unwrap().doc.clone();
+    let before_selection = s.doc().unwrap().selection.clone();
+    let before = table_for(&s, sid, tid).clone();
+    let before_layout = s.cache.get(&before_doc, doc::StoryId(sid), None);
+    let before_fragment = before_layout.frames.iter().flat_map(|f| &f.tables).find(|t| t.table == tid).unwrap();
+    let undo_len = s.doc().unwrap().history.undo.len();
+    let command = if horizontal { "table.splitHorizontally" } else { "table.splitVertically" };
+    s.execute(command, &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().history.undo.len(), undo_len + 1, "one split command creates one undo entry");
+    let after_doc = s.doc().unwrap().doc.clone();
+    let after_selection = s.doc().unwrap().selection.clone();
+    let after = table_for(&s, sid, tid).clone();
+    let after_layout = s.cache.get(&after_doc, doc::StoryId(sid), None);
+    let after_fragment = after_layout.frames.iter().flat_map(|f| &f.tables).find(|t| t.table == tid).unwrap();
+    assert_eq!(after_fragment.rect, before_fragment.rect, "splitting does not resize the table");
+    assert_eq!(after_fragment.cells.len(), before_fragment.cells.len() + 4, "four original owners split once");
+    assert_split_cells(&before, &after, before_fragment, after_fragment, range, horizontal);
+    let text = s.doc().unwrap().selection.text.unwrap();
+    let address = text.cell.unwrap();
+    assert_eq!(after.owner(address.row, address.col), (address.row, address.col));
+    assert!(text.focus <= after.cell(address.row, address.col).unwrap().text.len());
+    let cells = s.doc().unwrap().selection.cells.unwrap();
+    assert!(cells.range.r1 < after.nrows() && cells.range.c1 < after.ncols());
+    check(&s);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(std::sync::Arc::ptr_eq(&s.doc().unwrap().doc, &before_doc));
+    assert_eq!(s.doc().unwrap().selection, before_selection);
+    assert_eq!(s.doc().unwrap().history.undo.len(), undo_len);
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert!(std::sync::Arc::ptr_eq(&s.doc().unwrap().doc, &after_doc));
+    assert_eq!(s.doc().unwrap().selection, after_selection);
+    let bytes = crate::cmd::file_bytes(&s.doc().unwrap().doc).unwrap();
+    let reopened = crate::cmd::file_from(&bytes).unwrap();
+    reopened.check().unwrap();
+    assert_eq!(reopened.story(doc::StoryId(sid)).unwrap().tables.get(&tid).unwrap().as_ref(), &after);
+}
+
+fn assert_split_cells(
+    before: &designcraft_doc::Table,
+    after: &designcraft_doc::Table,
+    before_fragment: &designcraft_compose::TableFrag,
+    after_fragment: &designcraft_compose::TableFrag,
+    range: doc::CellRange,
+    horizontal: bool,
+) {
+    for placed in &before_fragment.cells {
+        let original = before.cell(placed.row, placed.col).unwrap();
+        let matches: Vec<_> = after_fragment.cells.iter().filter(|c| c.source == placed.source).collect();
+        assert_eq!(matches.len(), 1, "original cell text survives once: {}", placed.source);
+        let surviving = matches[0];
+        let cell = after.cell(surviving.row, surviving.col).unwrap();
+        let mut normalized = cell.clone();
+        normalized.row_span = original.row_span;
+        normalized.col_span = original.col_span;
+        assert_eq!(&normalized, original, "existing cell text and formatting are preserved");
+        if !range.contains(placed.row, placed.col) {
+            assert_eq!(surviving.rect, placed.rect, "unselected neighbor geometry is unchanged");
+            continue;
+        }
+        let second_addr = if horizontal {
+            (surviving.row + cell.row_span as usize, surviving.col)
+        } else {
+            (surviving.row, surviving.col + cell.col_span as usize)
+        };
+        let second = after.cell(second_addr.0, second_addr.1).unwrap();
+        assert_eq!(after.owner(second_addr.0, second_addr.1), second_addr);
+        assert!(second.text.is_empty());
+        assert_eq!(second.style, original.style);
+        assert_eq!(second.insets, original.insets);
+        assert_eq!(second.fill, original.fill);
+        assert_eq!(second.fill_tint, original.fill_tint);
+        let second_rect = after_fragment.cell(second_addr.0, second_addr.1).unwrap().rect;
+        assert_eq!(surviving.rect.union(second_rect), placed.rect, "the halves exactly cover the original cell");
+        if horizontal {
+            assert_eq!(surviving.rect.y1, second_rect.y0);
+        } else {
+            assert_eq!(surviving.rect.x1, second_rect.x0);
         }
     }
 }

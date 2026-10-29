@@ -230,62 +230,101 @@ impl Exporter<'_> {
         }
         let xf = parent * it.xf;
         if it.has_nested_items() {
-            // A frame with items pasted into it: fill, the items clipped to the frame, stroke.
-            let bp = if it.corners.is_none() { it.path.to_bezpath() } else { corners::apply(&it.path, &it.corners) };
-            let path = to_path(&bp);
-            let pushes = Self::push_group(s, it.opacity, it.blend);
-            s.push_transform(&tf(xf));
-            if !it.fill.is_none()
-                && let Some(p) = &path
-                && let Some(paint) = self.fill_paint(&it.fill, bp.bounding_box())
-            {
-                self.fill_item_path(s, &it.fill, paint, p);
-            }
-            s.pop();
-            // The clip in page space, so the children keep their absolute transforms.
-            let mut page_bp = bp.clone();
-            page_bp.apply_affine(xf);
-            let clip = to_path(&page_bp);
-            if let Some(c) = &clip {
-                s.push_clip_path(c, &FillRule::NonZero);
-            }
-            for c in it.children() {
-                self.item(s, c, xf, page);
-            }
-            if clip.is_some() {
-                s.pop();
-            }
-            if !it.stroke.is_none()
-                && let Some(p) = &path
-            {
-                s.push_transform(&tf(xf));
-                self.stroke(s, it, &bp, p);
-                s.pop();
-            }
-            for _ in 0..pushes {
-                s.pop();
-            }
+            self.draw_nested_item(s, it, xf, page);
             return;
         }
         if !it.children().is_empty() {
-            let pushes = Self::push_group(s, it.opacity, it.blend) + Self::push_isolation(s, it);
-            for c in it.shown_children() {
-                self.item(s, c, xf, page);
-            }
-            for _ in 0..pushes {
-                s.pop();
-            }
+            self.draw_group_children(s, it, xf, page);
             return;
         }
-        let doc = self.doc;
         let bp = if it.corners.is_none() { it.path.to_bezpath() } else { corners::apply(&it.path, &it.corners) };
         let path = to_path(&bp);
+        self.draw_leaf_item(s, it, parent, page, &bp, path.as_ref());
+    }
+
+    fn draw_nested_item(&mut self, s: &mut Surface, it: &Item, xf: Affine, page: Option<usize>) {
+        // A frame with items pasted into it: fill, the items clipped to the frame, stroke.
+        let bp = if it.corners.is_none() { it.path.to_bezpath() } else { corners::apply(&it.path, &it.corners) };
+        let path = to_path(&bp);
+        let pushes = Self::push_group(s, it.opacity, it.blend);
+        s.push_transform(&tf(xf));
+        if !it.fill.is_none()
+            && let Some(p) = &path
+            && let Some(paint) = self.fill_paint(&it.fill, bp.bounding_box())
+        {
+            self.fill_item_path(s, &it.fill, paint, p);
+        }
+        s.pop();
+        // The clip in page space, so the children keep their absolute transforms.
+        let mut page_bp = bp.clone();
+        page_bp.apply_affine(xf);
+        let clip = to_path(&page_bp);
+        if let Some(c) = &clip {
+            s.push_clip_path(c, &FillRule::NonZero);
+        }
+        for child in it.children() {
+            self.item(s, child, xf, page);
+        }
+        if clip.is_some() {
+            s.pop();
+        }
+        if !it.stroke.is_none()
+            && let Some(p) = &path
+        {
+            s.push_transform(&tf(xf));
+            self.stroke(s, it, &bp, p);
+            s.pop();
+        }
+        for _ in 0..pushes {
+            s.pop();
+        }
+    }
+
+    fn draw_group_children(&mut self, s: &mut Surface, it: &Item, xf: Affine, page: Option<usize>) {
+        let pushes = Self::push_group(s, it.opacity, it.blend) + Self::push_isolation(s, it);
+        for child in it.shown_children() {
+            self.item(s, child, xf, page);
+        }
+        for _ in 0..pushes {
+            s.pop();
+        }
+    }
+
+    fn draw_leaf_item(&mut self, s: &mut Surface, it: &Item, parent: Affine, page: Option<usize>, bp: &BezPath, path: Option<&Path>) {
+        let xf = parent * it.xf;
         let pushes = Self::push_group(s, it.opacity, it.blend);
         let frame_art = self.tag_story.is_some();
         if frame_art {
             s.start_tagged(ContentTag::Artifact(Artifact::new(ArtifactType::Other, None)));
         }
-        // Drop shadow: its coverage mask when one was rendered, else a simple offset silhouette.
+        self.draw_drop_shadow(s, it, parent, xf, path);
+        s.push_transform(&tf(xf));
+        if !it.fill.is_none()
+            && let Some(p) = path
+            && let Some(paint) = self.fill_paint(&it.fill, bp.bounding_box())
+        {
+            self.fill_item_path(s, &it.fill, paint, p);
+        }
+        if frame_art {
+            s.end_tagged();
+        }
+        self.draw_leaf_content(s, it, bp, path, page);
+        self.draw_leaf_stroke(s, it, bp, path, frame_art);
+        s.pop();
+        for _ in 0..pushes {
+            s.pop();
+        }
+        if let Content::Text(tfr) = &it.content {
+            let cs = self.composed(tfr.story, page);
+            if let Some(ft) = cs.frame(it.id) {
+                self.frame_objects(s, ft, xf * self.doc.text_local(it), page);
+            }
+        }
+    }
+
+    /// Draw a cached coverage mask or the offset item silhouette as the drop shadow.
+    fn draw_drop_shadow(&mut self, s: &mut Surface, it: &Item, parent: Affine, xf: Affine, path: Option<&Path>) {
+        let ds = &it.effects.drop_shadow;
         if ds.on
             && let Some(mask) = self.opts.shadows.get(&it.id)
             && let Some(c) = self.swatch_color(&ds.color, 1.0)
@@ -294,7 +333,7 @@ impl Exporter<'_> {
             draw_coverage(s, mask, c);
             s.pop();
         } else if ds.on
-            && let Some(p) = &path
+            && let Some(p) = path
             && let Some(c) = self.swatch_color(&ds.color, 1.0)
         {
             let a = self.doc.light_angle(ds.angle, ds.global_light).to_radians();
@@ -306,22 +345,14 @@ impl Exporter<'_> {
             s.set_fill(None);
             s.pop();
         }
-        s.push_transform(&tf(xf));
-        // Fill.
-        if !it.fill.is_none()
-            && let Some(p) = &path
-            && let Some(paint) = self.fill_paint(&it.fill, bp.bounding_box())
-        {
-            self.fill_item_path(s, &it.fill, paint, p);
-        }
-        if frame_art {
-            s.end_tagged();
-        }
-        // Content.
+    }
+
+    fn draw_leaf_content(&mut self, s: &mut Surface, it: &Item, bp: &BezPath, path: Option<&Path>, page: Option<usize>) {
+        let doc = self.doc;
         match &it.content {
             Content::Graphic(g) => {
                 let g = &if it.media.is_some() { it.drawn_graphic(&self.doc.assets).unwrap_or_else(|| g.clone()) } else { g.clone() };
-                if let Some(p) = &path {
+                if let Some(p) = path {
                     s.push_clip_path(p, &FillRule::NonZero);
                     // An explicit all-on choice is `Some(&[])`, not the file's defaults: passing
                     // `None` would embed the source's default-hidden layers and skip the rewrite
@@ -334,7 +365,7 @@ impl Exporter<'_> {
                 let cs = self.composed(tfr.story, page);
                 if let (Some(ft), Some(pt)) = (cs.frame(it.id), &tfr.options.path) {
                     // Type on a path: the glyphs as outlines along the path.
-                    for (si, gp) in designcraft_compose::path_glyphs(&cs, ft, &bp, pt) {
+                    for (si, gp) in designcraft_compose::path_glyphs(&cs, ft, bp, pt) {
                         let st = &cs.styles[si as usize];
                         // A gradient spans the path's box.
                         let fill = designcraft_doc::Fill {
@@ -370,26 +401,18 @@ impl Exporter<'_> {
             }
             _ => {}
         }
-        // Stroke.
+    }
+
+    fn draw_leaf_stroke(&mut self, s: &mut Surface, it: &Item, bp: &BezPath, path: Option<&Path>, frame_art: bool) {
         if !it.stroke.is_none()
-            && let Some(p) = &path
+            && let Some(p) = path
         {
             if frame_art {
                 s.start_tagged(ContentTag::Artifact(Artifact::new(ArtifactType::Other, None)));
             }
-            self.stroke(s, it, &bp, p);
+            self.stroke(s, it, bp, p);
             if frame_art {
                 s.end_tagged();
-            }
-        }
-        s.pop();
-        for _ in 0..pushes {
-            s.pop();
-        }
-        if let Content::Text(tfr) = &it.content {
-            let cs = self.composed(tfr.story, page);
-            if let Some(ft) = cs.frame(it.id) {
-                self.frame_objects(s, ft, xf * doc.text_local(it), page);
             }
         }
     }

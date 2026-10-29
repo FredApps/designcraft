@@ -284,7 +284,7 @@ impl<'r> Importer<'r> {
         self.next_id
     }
 
-    fn run(&mut self, _root: &El, top: &[El]) -> Result<()> {
+    fn read_preferences(&mut self, top: &[El]) {
         // Preferences first (page size, facing pages).
         for e in top {
             match e.local() {
@@ -341,6 +341,9 @@ impl<'r> Importer<'r> {
                 _ => {}
             }
         }
+    }
+
+    fn read_composite_fonts(&mut self, top: &[El]) {
         for e in top.iter().filter(|e| e.local() == "CompositeFont") {
             let name =
                 e.get("Name").map(str::to_string).unwrap_or_else(|| unescape_id(e.get("Self").unwrap_or("").trim_start_matches("CompositeFont/")));
@@ -365,6 +368,9 @@ impl<'r> Importer<'r> {
                 .collect();
             self.styles.composite_fonts.push(designcraft_doc::cjk::CompositeFont { name, entries });
         }
+    }
+
+    fn read_cjk_tables(&mut self, top: &[El]) -> Result<()> {
         for e in top.iter().filter(|e| e.local() == "KinsokuTable") {
             if e.get("CantBeginLineChars").is_some() || e.get("CantEndLineChars").is_some() {
                 self.kinsoku.insert(
@@ -394,6 +400,13 @@ impl<'r> Importer<'r> {
                 overrides,
             });
         }
+        Ok(())
+    }
+
+    fn run(&mut self, _root: &El, top: &[El]) -> Result<()> {
+        self.read_preferences(top);
+        self.read_composite_fonts(top);
+        self.read_cjk_tables(top)?;
         self.graphics(top);
         self.styles(top);
         if let Some(e) = top.iter().find(|e| e.local() == "FootnoteOption") {

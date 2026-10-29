@@ -9,7 +9,7 @@ use super::structure::{
 };
 use super::styles::{cell_style_apply, cell_style_create, cell_style_edit, table_style_apply, table_style_create, table_style_edit};
 use super::target::{edit_table, in_cell, in_table, in_table_or_ids, target};
-use super::*;
+use super::{CommandSpec, RowKind, cmd, has_doc, has_text, json, ok};
 
 pub fn specs() -> Vec<CommandSpec> {
     let mut v = style_specs();

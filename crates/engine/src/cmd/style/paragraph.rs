@@ -1,4 +1,4 @@
-use super::*;
+use super::{CharAttrs, CharacterStyle, ParaAttrs, ParagraphStyle, Result, Session, Styles, Value, bad, json, ok, str_param};
 
 #[cfg(test)]
 mod redefine_tests {

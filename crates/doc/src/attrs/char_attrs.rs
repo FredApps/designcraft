@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    Capitalization, ChangeMark, Deserialize, Digits, Kerning, Leading, Position, Serialize, attr_key, deserialize_explicit_value, unknown_attribute,
+};
 
 attr_set! {
     /// Character attributes (Character panel / character styles / the character part of paragraph styles).

@@ -64,11 +64,11 @@ fn very_wide_renders_do_not_panic() {
     let doc = Document::new(&NewDocument::default());
     let cache = Cache::new();
     let mut r = Renderer::new();
-    let img = r.render(&doc, &cache, &[], 70_000, 4, Affine::IDENTITY, &RenderOptions::default());
+    let img = r.render(&doc, &cache, &[], (70_000, 4), Affine::IDENTITY, &RenderOptions::default());
     assert_eq!(img.width, MAX_SIDE);
     let page = [Placed { spread: SpreadRef::Doc(0), xf: Affine::IDENTITY }];
     let opts = RenderOptions { background: Some([255, 255, 255, 255]), ..Default::default() };
-    let img = r.render(&doc, &cache, &page, 70_000, 64, Affine::scale(120.0), &opts);
+    let img = r.render(&doc, &cache, &page, (70_000, 64), Affine::scale(120.0), &opts);
     assert_eq!(img.width, MAX_SIDE);
     assert!(r.render_page(&doc, &cache, 0, 500.0, true, &RenderOptions::default()).is_none());
 }

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::DesignApp;
+use crate::app::file_dialogs::{Bound, with_path};
 use crate::theme::semibold;
 
 mod options;
@@ -799,6 +800,33 @@ fn edited(d: &Dialog, key: &str) -> bool {
     d.fields.contains_key(key) && d.s(key).trim() != shown.trim()
 }
 
+/// The custom baseline grid of Text Frame Options: `None` if nothing about it was edited, else off
+/// (null) or the fields the user changed.
+fn text_frame_baseline_grid(d: &Dialog, bad: &dyn Fn(&str) -> String) -> Result<Option<Value>, String> {
+    let grid_keys = ["customGrid", "gridStart", "gridIncrement", "gridRelativeTo"];
+    if !grid_keys.iter().any(|k| edited(d, k)) {
+        return Ok(None);
+    }
+    if !d.b("customGrid") {
+        return Ok(Some(Value::Null));
+    }
+    let all = edited(d, "customGrid");
+    let mut g = Map::new();
+    if all || edited(d, "gridStart") {
+        g.insert("start".into(), json!(d.m("gridStart").ok_or_else(|| bad("the baseline grid start is not a measure"))?));
+    }
+    if all || edited(d, "gridIncrement") {
+        g.insert(
+            "increment".into(),
+            json!(d.m("gridIncrement").filter(|v| *v > 0.0).ok_or_else(|| bad("the baseline grid increment must be a measure greater than zero"))?),
+        );
+    }
+    if all || edited(d, "gridRelativeTo") {
+        g.insert("relativeTo".into(), json!(d.s("gridRelativeTo")));
+    }
+    Ok(Some(Value::Object(g)))
+}
+
 fn confirm_text_frame_options(app: &mut DesignApp, d: &mut Dialog) -> Result<Value, String> {
     seed_text_frame_options(app, d);
     let d = &*d;
@@ -884,31 +912,8 @@ fn confirm_text_frame_options(app: &mut DesignApp, d: &mut Dialog) -> Result<Val
     }
     // The custom baseline grid: off, or the fields the user changed (all of them when it is
     // turned on, since it shows the document grid's).
-    let grid_keys = ["customGrid", "gridStart", "gridIncrement", "gridRelativeTo"];
-    if grid_keys.iter().any(|k| edited(d, k)) {
-        if d.b("customGrid") {
-            let all = edited(d, "customGrid");
-            let mut g = Map::new();
-            if all || edited(d, "gridStart") {
-                g.insert("start".into(), json!(d.m("gridStart").ok_or_else(|| bad("the baseline grid start is not a measure"))?));
-            }
-            if all || edited(d, "gridIncrement") {
-                g.insert(
-                    "increment".into(),
-                    json!(
-                        d.m("gridIncrement")
-                            .filter(|v| *v > 0.0)
-                            .ok_or_else(|| bad("the baseline grid increment must be a measure greater than zero"))?
-                    ),
-                );
-            }
-            if all || edited(d, "gridRelativeTo") {
-                g.insert("relativeTo".into(), json!(d.s("gridRelativeTo")));
-            }
-            p.insert("baselineGrid".into(), Value::Object(g));
-        } else {
-            p.insert("baselineGrid".into(), Value::Null);
-        }
+    if let Some(grid) = text_frame_baseline_grid(d, &bad)? {
+        p.insert("baselineGrid".into(), grid);
     }
     if p.is_empty() {
         return Ok(Value::Null);
@@ -2640,18 +2645,9 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                         });
                         check(ui, &mut d, "bpc", crate::i18n::tr(&app.ui.language, "Use Black Point Compensation"));
                         if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Load Profile…"))).clicked()
-                            && let Some(path) = app.services.pick_open.as_mut().and_then(|f| f("icc"))
+                            && let Err(e) = app.ask_open("icc", Bound::App, load_color_profile)
                         {
-                            match app.session.execute("color.loadProfile", &json!({"path": path})) {
-                                Ok(_) => {
-                                    // Replayed in load order at start-up, so the latest load of a path comes last.
-                                    app.ui.color_profiles.retain(|p| p != &path);
-                                    app.ui.color_profiles.push(path);
-                                    let f = app.session.execute("color.settings", &json!({})).unwrap_or_default();
-                                    d.fields.insert("profiles".into(), f["profiles"].clone());
-                                }
-                                Err(e) => app.status_error("Color Settings", e),
-                            }
+                            app.status_error("Color Settings", e);
                         }
                     }
                     "userDictionary" => user_dictionary(app, ui, &mut d),
@@ -3245,6 +3241,11 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
     if d.id != "pdfImport" || !d.b("async") {
         app.cancel_pdf_import();
     }
+    confirm_part1(app, d)
+}
+
+/// One slice of the dialogs' Apply; later slices take the ids this one doesn't.
+fn confirm_part1(app: &mut DesignApp, d: Dialog) -> Result<Value, String> {
     match d.id.as_str() {
         "colorTheme" => {
             let result = app.run("swatch.addColorTheme", json!({"name": d.s("name"), "colors": d.fields.get("colors")}));
@@ -3361,6 +3362,13 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             }
             r
         }
+        _ => confirm_part2(app, d),
+    }
+}
+
+/// One slice of the dialogs' Apply; later slices take the ids this one doesn't.
+fn confirm_part2(app: &mut DesignApp, d: Dialog) -> Result<Value, String> {
+    match d.id.as_str() {
         "deleteParagraphStyle" => {
             let name = d.s("name");
             let replace = d.s("replaceWith");
@@ -3476,6 +3484,13 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             }
             r
         }
+        _ => confirm_part3(app, d),
+    }
+}
+
+/// One slice of the dialogs' Apply; later slices take the ids this one doesn't.
+fn confirm_part3(app: &mut DesignApp, d: Dialog) -> Result<Value, String> {
+    match d.id.as_str() {
         // Nothing edited: OK leaves the fill or stroke as it was (its swatch and tint).
         "colorPicker" if !d.b("edited") => Ok(Value::Null),
         "colorPicker" => {
@@ -3489,7 +3504,12 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             app.run("object.color", json!({"color": color, "target": d.s("target"), "text": d.b("text")}))
         }
         "layerOptions" => {
-            let hidden: Vec<Value> = d.fields.get("layers").and_then(Value::as_array).map(|a| a.iter().filter(|l| l["visible"] == false).map(|l| l["name"].clone()).collect()).unwrap_or_default();
+            let hidden: Vec<Value> = d
+                .fields
+                .get("layers")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter(|l| l["visible"] == false).map(|l| l["name"].clone()).collect())
+                .unwrap_or_default();
             // A dialog opened without the menu's fields has no `useDefaults` at all: confirming it
             // with no layer unticked resets file defaults, as it did before all-on existed, rather
             // than making every layer explicitly visible. Only an explicit `false` means all-on.
@@ -3538,7 +3558,11 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
                     "pages": pages, "spreads": d.b("spreads"), "marks": d.b("marks"), "bleed": d.b("bleed")}),
             )?;
             let printer = r["printer"].as_str().unwrap_or_else(|| crate::i18n::tr(&app.ui.language, "the default printer"));
-            app.status(crate::i18n::tr(&app.ui.language, "Sent {count} page(s) to {printer}").replace("{count}", &r["pages"].to_string()).replace("{printer}", printer));
+            app.status(
+                crate::i18n::tr(&app.ui.language, "Sent {count} page(s) to {printer}")
+                    .replace("{count}", &r["pages"].to_string())
+                    .replace("{printer}", printer),
+            );
             Ok(r)
         }
         "epubExport" => {
@@ -3596,15 +3620,32 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             }
             let stem = if title.is_empty() { doc_name } else { title };
             let name = if stem.is_empty() { "Export.pdf".to_string() } else { format!("{stem}.pdf") };
-            match app.pick_save(&name) {
-                Some(path) => {
-                    params["path"] = json!(path);
-                    crate::menus::export_pdf(app, &params)
-                }
-                // The user cancelled the save dialog: export nothing.
-                None => Ok(Value::Null),
-            }
+            app.ask_save(&name, Bound::Document, move |app, path| crate::menus::export_pdf(app, &with_path(&params, "path", path)))
         }
+        _ => confirm_part4(app, d),
+    }
+}
+
+/// Color Settings › Load Profile…: load the chosen profile and list it in the dialog if it is
+/// still open.
+fn load_color_profile(app: &mut DesignApp, path: String) -> Result<Value, String> {
+    if let Err(e) = app.session.execute("color.loadProfile", &json!({"path": path})) {
+        app.status_error("Color Settings", e);
+        return Ok(Value::Null);
+    }
+    // Replayed in load order at start-up, so the latest load of a path comes last.
+    app.ui.color_profiles.retain(|p| p != &path);
+    app.ui.color_profiles.push(path);
+    let f = app.session.execute("color.settings", &json!({})).unwrap_or_default();
+    if let Some(d) = app.ui.dialog.as_mut().filter(|d| d.id == "colorSettings") {
+        d.fields.insert("profiles".into(), f["profiles"].clone());
+    }
+    Ok(Value::Null)
+}
+
+/// One slice of the dialogs' Apply; later slices take the ids this one doesn't.
+fn confirm_part4(app: &mut DesignApp, d: Dialog) -> Result<Value, String> {
+    match d.id.as_str() {
         "preferences" => {
             let mut prefs = json!({"scaleStrokes": d.b("scaleStrokes"), "dimensionsIncludeStroke": d.b("dimensionsIncludeStroke"), "transformationsAreTotals": d.b("transformationsAreTotals"), "absolutePageNumbers": d.b("absolutePageNumbers"), "highlightHj": d.b("highlightHj"), "highlightKeeps": d.b("highlightKeeps"), "highlightCustomTracking": d.b("highlightCustomTracking"), "highlightSubstitutedFonts": d.b("highlightSubstitutedFonts"), "richBlackOutput": d.b("richBlackOutput"), "typographersQuotes": d.b("typographersQuotes"), "showFontNamesInEnglish": d.b("showFontNamesInEnglish"), "smartTextReflow": d.b("smartTextReflow"),
                     "autocorrect": d.b("autocorrect"), "showAddedText": d.b("showAddedText"), "showNoteAnchors": d.b("showNoteAnchors"),
@@ -3710,6 +3751,13 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             doc["glyphFallback"] = json!(d.b("glyphFallback"));
             app.run("document.preferences", doc)
         }
+        _ => confirm_part5(app, d),
+    }
+}
+
+/// One slice of the dialogs' Apply; later slices take the ids this one doesn't.
+fn confirm_part5(app: &mut DesignApp, d: Dialog) -> Result<Value, String> {
+    match d.id.as_str() {
         "newWorkspace" => app.run(
             "window.newWorkspace",
             json!({"name": d.s("name"), "panelLocations": d.b("panelLocations"), "menuCustomization": d.b("menuCustomization")}),
@@ -3739,20 +3787,20 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             if d.b("quitting") {
                 return app.confirm_quit_document(uid.ok_or("Missing document in quit confirmation")?, d.b("discard"));
             }
-            let index = |app: &DesignApp| app.session.documents().iter().position(|doc| Some(doc.uid) == uid);
+            let index = move |app: &DesignApp| app.session.documents().iter().position(|doc| Some(doc.uid) == uid);
             let Some(i) = index(app) else { return Ok(Value::Null) };
-            if !d.b("discard") {
-                app.run("file.activate", json!({"index": i}))?;
-                app.run("app.save", json!({}))?;
-                // Still unsaved: the save was cancelled (no file chosen). Keep the document open.
-                if app.session.documents().get(i).is_none_or(|doc| doc.is_dirty()) {
-                    return Ok(Value::Null);
-                }
+            let discard = d.b("discard");
+            // Closes the document once it is saved (or at once, for Don't Save). Still unsaved, the
+            // save failed: the document stays open.
+            let close = move |app: &mut DesignApp| match index(app) {
+                Some(i) if discard || app.session.documents().get(i).is_some_and(|doc| !doc.is_dirty()) => app.run("file.close", json!({"index": i})),
+                _ => Ok(Value::Null),
+            };
+            if discard {
+                return close(app);
             }
-            match index(app) {
-                Some(i) => app.run("file.close", json!({"index": i})),
-                None => Ok(Value::Null),
-            }
+            app.run("file.activate", json!({"index": i}))?;
+            crate::menus::save_then(app, close)
         }
         "loadStyles" => {
             let checked = |key: &str| -> Vec<&str> {
@@ -3804,6 +3852,13 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
             app.ui.dialog = Some(d);
             result
         }
+        _ => confirm_part6(app, d),
+    }
+}
+
+/// One slice of the dialogs' Apply; later slices take the ids this one doesn't.
+fn confirm_part6(app: &mut DesignApp, d: Dialog) -> Result<Value, String> {
+    match d.id.as_str() {
         "insertXref" => {
             let format = d.s("format");
             let target = d.s("target");

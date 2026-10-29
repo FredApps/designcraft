@@ -1,6 +1,6 @@
 use super::invoke::TEXT_FIELD_COMMANDS;
 use super::ui_commands::ui_label;
-use super::*;
+use super::{DesignApp, Value};
 
 /// Commands that act on the text being typed wait while an IME composes at the caret (its marked
 /// text isn't typed yet): Undo and Redo (the native menu takes ⌘Z ahead of the IME), the clipboard

@@ -1957,13 +1957,9 @@ fn searched_ui_commands_run_without_parameters_and_keep_preferences() {
     // A two-page document, a saved workspace and non-default preferences, a host with window
     // controls, and file dialogs that are dismissed.
     let setup = |context: usize| {
-        let services = crate::Services {
-            pick_open: Some(Box::new(|_| None)),
-            pick_save: Some(Box::new(|_| None)),
-            clipboard_text: Some(Box::new(|| None)),
-            ..Default::default()
-        };
+        let services = crate::Services { clipboard_text: Some(Box::new(|| None)), ..Default::default() };
         let mut app = DesignApp::new(designcraft_engine::Session::new(), services);
+        app.answer_dialogs(crate::app::file_dialogs::testing::answer_with(None));
         app.custom_titlebar = true;
         app.canvas_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0)));
         app.run("file.new", json!({"pages": 2})).unwrap();

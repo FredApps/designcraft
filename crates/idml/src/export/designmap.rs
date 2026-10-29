@@ -1,5 +1,5 @@
 use super::common::{anchor_self, bool_s, p, uid, with_props, xref_format_self};
-use super::*;
+use super::{CHAR_BUILTINS, DOM_VERSION, Document, El, Ex, HashSet, PARA_BUILTINS, PKG_NS, document_with_pi, escape_id, names, num};
 
 impl<'a> Ex<'a> {
     // ---------- designmap ----------

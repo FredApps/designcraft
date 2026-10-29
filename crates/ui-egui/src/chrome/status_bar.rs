@@ -1,4 +1,4 @@
-use super::*;
+use super::{Color32, DesignApp, Sense, Stroke, Tokens, icons, json, panels, semibold, vec2};
 
 /// The widest a document tab grows: a longer name is shortened so its close button and the
 /// tabs after it stay in view.

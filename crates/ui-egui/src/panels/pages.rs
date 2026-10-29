@@ -54,7 +54,7 @@ fn thumb(app: &mut DesignApp, ctx: &egui::Context, of: ThumbOf, h: f32) -> Optio
             let view = designcraft_geom::Affine::scale(scale) * designcraft_geom::Affine::translate(-b.origin().to_vec2());
             let o = designcraft_render::RenderOptions { background: Some([255, 255, 255, 255]), ..opts };
             let placed = [designcraft_render::Placed { spread: SpreadRef::Parent(i), xf: designcraft_geom::Affine::IDENTITY }];
-            (r.render(&st.doc, &app.session.cache, &placed, w, h, view, &o), format!("thumbp{}", id.0))
+            (r.render(&st.doc, &app.session.cache, &placed, (w, h), view, &o), format!("thumbp{}", id.0))
         }
     };
     let ci = egui::ColorImage::from_rgba_premultiplied([img.width as usize, img.height as usize], &img.pixels);

@@ -1,5 +1,5 @@
 use super::values::{span, tint};
-use super::*;
+use super::{CellRange, El, Importer, RowHeightMode, StoryId, Table, names, swatch};
 
 /// Preserve the legacy uniform field only when all four sides explicitly specify every
 /// property. Partial records must stay sparse so they can inherit from a parent style.

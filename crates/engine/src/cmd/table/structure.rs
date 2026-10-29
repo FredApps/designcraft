@@ -1,5 +1,5 @@
 use super::target::{column_width, count, edit_table, in_cell, para_direction, target};
-use super::*;
+use super::{CellAddr, Result, RowKind, Selection, Session, Table, TextSel, Value, bad, json, ok, str_param};
 
 pub(super) fn insert(s: &mut Session, p: &Value) -> Result<Value> {
     let t = s.doc()?.selection.text.ok_or_else(|| bad("table.insert", "no insertion point"))?;

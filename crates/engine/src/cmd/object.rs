@@ -2639,17 +2639,7 @@ fn text_frame_options(s: &mut Session, p: &Value) -> Result<Value> {
             if let Some(v) = rule_bottom {
                 o.column_rule_bottom_inset = v;
             }
-            match custom_grid {
-                Some(Some((start, increment, relative_to))) => {
-                    let mut g = o.baseline_grid.unwrap_or(doc_grid);
-                    g.start = start.unwrap_or(g.start);
-                    g.increment = increment.unwrap_or(g.increment);
-                    g.relative_to = relative_to.unwrap_or(g.relative_to);
-                    o.baseline_grid = Some(g);
-                }
-                Some(None) => o.baseline_grid = None,
-                None => {}
-            }
+            apply_custom_frame_grid(o, custom_grid, doc_grid);
             // Fixed Width columns set the frame's width: n columns, the gutters between them and
             // the left and right insets.
             let fixed_width = o.columns_kind == designcraft_doc::ColumnsKind::FixedWidth && o.column_width > 0.0;
@@ -2669,6 +2659,24 @@ fn text_frame_options(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Ok(json!({"changed": ids.len()}))
     })
+}
+
+fn apply_custom_frame_grid(
+    options: &mut TextFrameOptions,
+    custom: Option<Option<(Option<f64>, Option<f64>, Option<designcraft_doc::FrameGridRelative>)>>,
+    document_grid: designcraft_doc::FrameBaselineGrid,
+) {
+    match custom {
+        Some(Some((start, increment, relative_to))) => {
+            let mut grid = options.baseline_grid.unwrap_or(document_grid);
+            grid.start = start.unwrap_or(grid.start);
+            grid.increment = increment.unwrap_or(grid.increment);
+            grid.relative_to = relative_to.unwrap_or(grid.relative_to);
+            options.baseline_grid = Some(grid);
+        }
+        Some(None) => options.baseline_grid = None,
+        None => {}
+    }
 }
 
 /// The gap at `p` on spread `sr`: (vertical gap?, edge a, edge b, ids ending at a, ids starting at b).

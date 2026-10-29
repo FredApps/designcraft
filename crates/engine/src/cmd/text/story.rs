@@ -1,6 +1,6 @@
 use super::caret::story_of;
 use super::format::{Target, effective_char_format, format_targets};
-use super::*;
+use super::{ItemId, Result, Session, StoryId, Value, bad, bool_or, json};
 
 /// The stories of the text selection, the selected cells and the selected text frames.
 fn selected_stories(s: &Session) -> Result<Vec<StoryId>> {
