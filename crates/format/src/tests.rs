@@ -734,3 +734,29 @@ fn too_many_entries_are_refused() {
     let Err(err) = load(&z.finish().unwrap().into_inner()) else { panic!("an archive with 100 001 entries loaded") };
     assert!(err.to_string().contains("entries"), "{err}");
 }
+
+#[test]
+fn toc_scope_legacy_defaults_native_roundtrip_and_required_version() {
+    use designcraft_doc::{Toc, TocEntry, TocScope};
+    let mut d = Document::new(&NewDocument::default());
+    let (_, story) =
+        d.add_text_frame(SpreadRef::Doc(0), Rect::new(36.0, 36.0, 300.0, 400.0), d.default_layer(), "Contents", ParaFormat::default()).unwrap();
+    let legacy = json!({"story": story.0, "title": "Contents", "entries": [{"style": "Head", "level": 1}], "pageNumbers": true});
+    let toc: Toc = serde_json::from_value(legacy).unwrap();
+    assert_eq!(toc.scope, TocScope::CurrentDocument);
+    d.toc = Some(toc);
+    for (scope, version) in [(TocScope::CurrentDocument, 2), (TocScope::EntireBook, 5)] {
+        d.toc.as_mut().unwrap().scope = scope;
+        assert_eq!(required_version(&d), version);
+        let bytes = save(&d).unwrap();
+        let mut zip = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        let mut meta = String::new();
+        zip.by_name("meta.json").unwrap().read_to_string(&mut meta).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&meta).unwrap()["version"], version);
+        let back = load(&bytes).unwrap();
+        assert_eq!(back.toc, d.toc);
+        assert_eq!(back.toc.as_ref().unwrap().entries, [TocEntry::new("Head", 1)]);
+    }
+    d.toc.as_mut().unwrap().scope = TocScope::CurrentDocument;
+    assert_eq!(required_version(&d), 2, "a local TOC does not require a new reader");
+}

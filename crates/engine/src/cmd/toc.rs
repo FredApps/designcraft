@@ -5,6 +5,7 @@
 use designcraft_compose::{ComposeOptions, caret, compose_story};
 use designcraft_doc::{
     Align, Document, NO_CHAR_STYLE, ParaAttrs, ParaFormat, ParagraphStyle, SpreadRef, StoryId, TabAlign, TabStop, Toc, TocEntry, TocPageNumber,
+    TocScope,
 };
 use designcraft_geom::Rect;
 use serde_json::{Value, json};
@@ -19,25 +20,110 @@ pub fn specs() -> Vec<CommandSpec> {
             "Table of Contents…",
             ["Layout"],
             None,
-            "{entries: [{style, level?: 1 (1-9), entryStyle?: paragraph style of its entries (default \"TOC Level n\"), pageNumber?: \"after\"|\"before\"|\"none\", separator?: text between entry and number (default a tab), pageNumberStyle?: character style of the page number, separatorStyle?: character style of the separator, sort?: bool (Sort Entries in Alphabetical Order: among their siblings, each with the entries under it)}] | styles: [names] (levels 1, 2, …), title?: \"Contents\", titleStyle?: paragraph style of the title (default \"TOC Title\"), pageNumbers?: true, replace?: true (regenerate the existing table of contents in place; false makes a new frame), page?: 1-based page for a new frame (its margins), rect?: [x0,y0,x1,y1] (spread coords)} → {story, entries}",
+            "{entries: [{style, level?: 1 (1-9), entryStyle?: paragraph style of its entries (default \"TOC Level n\"), pageNumber?: \"after\"|\"before\"|\"none\", separator?: text between entry and number (default a tab), pageNumberStyle?: character style of the page number, separatorStyle?: character style of the separator, sort?: bool (Sort Entries in Alphabetical Order: among their siblings, each with the entries under it)}] | styles: [names] (levels 1, 2, …), title?: \"Contents\", titleStyle?: paragraph style of the title (default \"TOC Title\"), pageNumbers?: true, scope?: \"currentDocument\"|\"entireBook\" (Book order, stable numbering only), replace?: true (regenerate the existing table of contents in place; false makes a new frame), page?: 1-based page for a new frame (its margins), rect?: [x0,y0,x1,y1] (spread coords)} → {story, entries}",
             has_doc,
             generate
         ),
         cmd!("toc.update", "Update Table of Contents", ["Layout"], None, "{} — regenerate the existing table of contents", has_toc, |s, _| {
+            let toc = s.doc()?.doc.toc.clone().ok_or_else(|| bad("toc.update", "no table of contents"))?;
+            let found = book_found(s, toc.scope, &toc.entries)?;
             s.edit(|d, _| {
-                let toc = d.toc.clone().ok_or_else(|| bad("toc.update", "no table of contents"))?;
-                let n = fill(d, &toc, None)?;
+                let n = fill(d, &toc, None, found)?;
                 Ok(json!({"story": toc.story.0, "entries": n}))
             })
         }),
-        cmd!(query "toc.entries", "Table of Contents Entries", [], None, "{entries | styles} → [{level, text, page}] without changing the document", has_doc, |s, p| {
+        cmd!(query "toc.entries", "Table of Contents Entries", [], None, "{entries | styles, scope?: \"currentDocument\"|\"entireBook\"} → [{level, text, page, document?}] without changing the document", has_doc, |s, p| {
             let entries = entries_param(p)?;
             let d = &s.doc()?.doc;
             let skip = d.toc.as_ref().map(|t| t.story);
-            let found = sort_entries(collect(d, &entries, skip), &entries);
-            Ok(json!(found.into_iter().map(|e| json!({"level": e.level, "text": e.text, "page": e.page})).collect::<Vec<_>>()))
+            let scope = scope_param(p)?;
+            let found = book_found(s, scope, &entries)?.unwrap_or_else(|| sort_entries(collect(d, &entries, skip), &entries));
+            Ok(json!(found.into_iter().map(|e| {
+                let mut value = json!({"level": e.level, "text": e.text, "page": e.page});
+                if let Some(document) = e.document { value["document"] = json!(document); }
+                value
+            }).collect::<Vec<_>>()))
+        }),
+        cmd!(query "toc.styles", "Table of Contents Source Styles", [], None,
+        "{scope?: \"currentDocument\"|\"entireBook\"} → {styles, bookAvailable, bookError?}", has_doc, |s, p| {
+            let context = super::book::active_member(s);
+            let mut styles = std::collections::BTreeSet::new();
+            let mut add = |d: &Document| {
+                styles.extend(d.styles.paragraph.iter().filter(|p| p.name != designcraft_doc::NO_PARA_STYLE).map(|p| p.name.clone()));
+            };
+            if scope_param(p)? == TocScope::EntireBook {
+                super::book::visit_toc(s, |_, d| { add(d); Ok(()) })?;
+            } else {
+                add(&s.doc()?.doc);
+            }
+            Ok(json!({"styles": styles, "bookAvailable": context.is_ok(), "bookError": context.err().map(|e| e.to_string())}))
         }),
     ]
+}
+
+fn scope_param(p: &Value) -> Result<TocScope> {
+    p.get("scope").map_or(Ok(TocScope::CurrentDocument), |v| serde_json::from_value(v.clone()).map_err(|e| bad("toc", format!("invalid scope: {e}"))))
+}
+
+/// Book traversal reuses the document collector without sorting across chapter boundaries.
+fn book_found(s: &Session, scope: TocScope, entries: &[TocEntry]) -> Result<Option<Vec<Found>>> {
+    if scope == TocScope::CurrentDocument {
+        return Ok(None);
+    }
+    if entries.iter().any(|e| e.sort) {
+        return Err(bad("toc", "Entire Book uses Book order; alphabetical sorting is available only for Current Document"));
+    }
+    if s.book.as_ref().is_some_and(|b| b.numbering_needs_update) {
+        return Err(bad("toc", "Book order changed; save and close chapters, run Update Numbering, then reopen the TOC document and update the TOC"));
+    }
+    let mut found = Vec::new();
+    let mut styles = std::collections::HashSet::new();
+    let mut next = 1u32;
+    super::book::visit_toc(s, |path, d| {
+        if d.page_number(0) != next {
+            return Err(bad(
+                "toc",
+                format!("Book numbering is not current at {path}; save and close chapters, run Update Numbering, then reopen the TOC document"),
+            ));
+        }
+        next = next
+            .checked_add(u32::try_from(d.page_count()).map_err(|_| bad("toc", "too many Book pages"))?)
+            .ok_or_else(|| bad("toc", "too many Book pages"))?;
+        styles.extend(d.styles.paragraph.iter().map(|p| p.name.clone()));
+        let mut chapter = collect(d, entries, d.toc.as_ref().map(|t| t.story));
+        for f in &mut chapter {
+            f.document = Some(path.to_string());
+        }
+        found.extend(chapter);
+        Ok(())
+    })?;
+    for entry in entries {
+        if !styles.contains(&entry.style) {
+            return Err(bad("toc", format!("no paragraph style `{}` in the Book", entry.style)));
+        }
+    }
+    Ok(Some(found))
+}
+
+/// Called after the command's normal reflow/caption/autosize passes, before recording undo.
+/// Accept only fixed, already-numbered layouts; do not iterate or write chapters.
+pub(crate) fn validate_book_layout(before: &Document, after: &Document) -> Result<()> {
+    let Some(toc) = after.toc.as_ref().filter(|t| t.scope == TocScope::EntireBook) else { return Ok(()) };
+    let old = collect(before, &toc.entries, before.toc.as_ref().map(|t| t.story));
+    let new = collect(after, &toc.entries, Some(toc.story));
+    if before.page_count() != after.page_count() || old != new {
+        return Err(bad(
+            "toc",
+            "Entire Book changed page counts or heading positions; iterative TOC/layout stabilization is not supported yet. Reserve fixed TOC frames/pages and update Book numbering first",
+        ));
+    }
+    if compose_story(after, toc.story, &Default::default()).overset_at.is_some() {
+        return Err(bad(
+            "toc",
+            "Entire Book TOC does not fit its frames; reserve more fixed TOC space and update Book numbering before retrying (automatic stabilization is not supported yet)",
+        ));
+    }
+    Ok(())
 }
 
 fn has_toc(s: &Session) -> std::result::Result<(), String> {
@@ -150,7 +236,10 @@ fn sort_entries(found: Vec<Found>, entries: &[TocEntry]) -> Vec<Found> {
     blocks.into_iter().flatten().collect()
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Found {
+    document: Option<String>,
+    source: (StoryId, usize),
     pub level: u8,
     pub text: String,
     pub page: String,
@@ -190,6 +279,8 @@ pub fn collect(d: &Document, entries: &[TocEntry], skip: Option<StoryId>) -> Vec
             let in_spread = d.spreads[si].page_at_x(b.center().x).unwrap_or(0);
             let abs = d.first_page_of_spread(si) + in_spread;
             out.push(Found {
+                document: None,
+                source: (*sid, pi),
                 level: e.level,
                 text,
                 entry: ei,
@@ -237,8 +328,8 @@ fn ensure_styles(d: &mut Document, levels: u8, width: f64) {
 }
 
 /// Rewrite the TOC story; returns the number of entries.
-fn fill(d: &mut Document, toc: &Toc, width: Option<f64>) -> Result<usize> {
-    let found = collect(d, &toc.entries, Some(toc.story));
+fn fill(d: &mut Document, toc: &Toc, width: Option<f64>, found: Option<Vec<Found>>) -> Result<usize> {
+    let found = found.unwrap_or_else(|| collect(d, &toc.entries, Some(toc.story)));
     let levels = toc.entries.iter().map(|e| e.level).max().unwrap_or(1);
     let width = width.unwrap_or_else(|| {
         d.story(toc.story).and_then(|st| st.frames.first()).and_then(|f| d.item(*f)).map(|i| i.text_area().width()).unwrap_or(300.0)
@@ -250,7 +341,7 @@ fn fill(d: &mut Document, toc: &Toc, width: Option<f64>) -> Result<usize> {
     for name in toc.entries.iter().flat_map(|e| [e.page_number_style.as_deref(), e.separator_style.as_deref()]).flatten() {
         char_style_exists(d, name)?;
     }
-    let found = sort_entries(found, &toc.entries);
+    let found = if toc.scope == TocScope::CurrentDocument { sort_entries(found, &toc.entries) } else { found };
     let mut text = String::new();
     let mut styles = Vec::new();
     // Character styles of page numbers and separators: (byte range, style).
@@ -327,9 +418,13 @@ fn generate(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let page = p.get("page").and_then(Value::as_u64).map_or(Some(0), |n| usize::try_from(n.max(1) - 1).ok());
     let page = page.ok_or_else(|| bad("toc.generate", "no such page"))?;
+    let scope = scope_param(p)?;
+    let found = book_found(s, scope, &entries)?;
     s.edit(|d, sel| {
-        for e in &entries {
-            para_style_exists(d, &e.style)?;
+        if scope == TocScope::CurrentDocument {
+            for e in &entries {
+                para_style_exists(d, &e.style)?;
+            }
         }
         // Replace: regenerate the existing TOC story in place; otherwise make a frame.
         let existing = d.toc.as_ref().map(|t| t.story).filter(|sid| replace && d.story(*sid).is_some());
@@ -345,8 +440,8 @@ fn generate(s: &mut Session, p: &Value) -> Result<Value> {
                 (sid, w)
             }
         };
-        let toc = Toc { story, title: title.clone(), entries: entries.clone(), page_numbers, title_style: title_style.clone() };
-        let n = fill(d, &toc, width)?;
+        let toc = Toc { scope, story, title: title.clone(), entries: entries.clone(), page_numbers, title_style: title_style.clone() };
+        let n = fill(d, &toc, width, found)?;
         d.toc = Some(toc);
         Ok(json!({"story": story.0, "entries": n}))
     })
@@ -484,7 +579,7 @@ mod tests {
 
     /// A one-page document whose one story has `paras` (text, paragraph style; the styles are
     /// made here), and an empty second page for the table of contents.
-    fn doc_with(paras: &[(&str, &str)]) -> (Session, usize) {
+    pub(super) fn doc_with(paras: &[(&str, &str)]) -> (Session, usize) {
         let mut s = Session::new();
         s.execute("file.new", &json!({})).unwrap();
         let mut names: Vec<&str> = paras.iter().map(|(_, st)| *st).collect();
@@ -647,3 +742,7 @@ mod tests {
         p
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "toc/book_tests.rs"]
+mod book_tests;

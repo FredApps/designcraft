@@ -559,6 +559,7 @@ impl Session {
         // Preview restoration can replace the document before a Find handler resolves bounds.
         self.discard_stale_find_scope();
         let before = self.active().map(|d| (d.uid, d.doc.clone(), d.selection.clone()));
+        let before_revision = self.active().map(|d| d.revision);
         // What an undoable command runs is part of its undo step.
         let nested = self.in_undo_step;
         self.in_undo_step = nested || spec.undoable;
@@ -596,6 +597,18 @@ impl Session {
             }
         }
         self.autosize_changed(spec, before.as_ref());
+        if matches!(id, "toc.generate" | "toc.update")
+            && let (Some((_, old, selection)), Some(st)) = (before.as_ref(), self.active_mut())
+            && let Err(e) = cmd::toc::validate_book_layout(old, &st.doc)
+        {
+            st.doc = old.clone();
+            st.selection = selection.clone();
+            if let Some(revision) = before_revision {
+                st.revision = revision;
+            }
+            self.cache.clear();
+            return Err(e);
+        }
         self.keep_guide_selection_valid(before.as_ref(), id);
         self.record_undo_step(spec, before, nested);
         if spec.journal {

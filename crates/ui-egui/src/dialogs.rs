@@ -6808,7 +6808,10 @@ pub fn open_toc(app: &mut DesignApp) {
                 .collect()
         })
         .unwrap_or_default();
-    let fields = json!({
+    let mut fields = json!({
+        "scope": toc.map_or(designcraft_doc::TocScope::CurrentDocument, |t| t.scope),
+        "localStyles": styles,
+        "_sourceScope": "currentDocument",
         "title": toc.map_or("Contents", |t| t.title.as_str()),
         "titleStyle": toc.and_then(|t| t.title_style.clone()).unwrap_or_default(),
         "included": rows,
@@ -6818,7 +6821,35 @@ pub fn open_toc(app: &mut DesignApp) {
         "hasToc": toc.is_some(),
         "replace": toc.is_some(),
     });
-    app.ui.dialog = Some(Dialog::new(TOC, fields));
+    if let Ok(info) = app.session.execute("toc.styles", &json!({})) {
+        fields["bookAvailable"] = info["bookAvailable"].clone();
+        fields["bookError"] = info["bookError"].clone();
+    }
+    let mut dialog = Dialog::new(TOC, fields);
+    if dialog.s("scope") == "entireBook" {
+        refresh_toc_sources(app, &mut dialog);
+    }
+    app.ui.dialog = Some(dialog);
+}
+
+/// Source style names come from the engine; output styles always belong to the destination.
+fn refresh_toc_sources(app: &mut DesignApp, d: &mut Dialog) {
+    d.fields.insert("_sourceScope".into(), json!(d.s("scope")));
+    if d.s("scope") != "entireBook" {
+        d.fields.insert("styles".into(), d.fields.get("localStyles").cloned().unwrap_or_else(|| json!([])));
+        d.fields.remove("status");
+        return;
+    }
+    match app.session.execute("toc.styles", &json!({"scope": "entireBook"})) {
+        Ok(info) => {
+            d.fields.insert("styles".into(), info["styles"].clone());
+            d.fields.remove("status");
+        }
+        Err(e) => {
+            d.fields.insert("styles".into(), json!([]));
+            d.fields.insert("status".into(), json!(e.to_string()));
+        }
+    }
 }
 
 /// The dialog's fields as `toc.generate` params. A new frame goes on the page in view.
@@ -6839,13 +6870,14 @@ fn toc_params(app: &DesignApp, d: &Dialog) -> Value {
             if !r.separator_style.is_empty() {
                 e["separatorStyle"] = json!(r.separator_style);
             }
-            if r.sort {
+            if r.sort && d.s("scope") != "entireBook" {
                 e["sort"] = json!(true);
             }
             e
         })
         .collect();
-    let mut p = json!({"title": d.s("title"), "entries": entries, "replace": d.b("replace")});
+    let scope = if d.s("scope") == "entireBook" { "entireBook" } else { "currentDocument" };
+    let mut p = json!({"scope": scope, "title": d.s("title"), "entries": entries, "replace": d.b("replace")});
     let title_style = d.s("titleStyle");
     if !title_style.is_empty() {
         p["titleStyle"] = json!(title_style);
@@ -6882,7 +6914,35 @@ fn toc_style_combo(ui: &mut egui::Ui, salt: &str, styles: &[String], auto: &str,
 fn toc_dialog(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
     let lang = app.ui.language.clone();
     let tr = |s: &str| crate::i18n::tr(&lang, s).to_string();
+    let old_scope = d.s("scope");
+    let mut scope = old_scope.clone();
+    ui.horizontal(|ui| {
+        crate::rtl::label(ui, tr("Scope:"));
+        craft_ui::ComboBox::from_id_salt("toc_scope")
+            .selected_text(tr(if scope == "entireBook" { "Entire Book" } else { "Current Document" }))
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(scope != "entireBook", tr("Current Document")).clicked() {
+                    scope = "currentDocument".into();
+                }
+                let choice = ui.add_enabled_ui(d.b("bookAvailable"), |ui| ui.selectable_label(scope == "entireBook", tr("Entire Book"))).inner;
+                let choice = choice.on_disabled_hover_text(d.s("bookError"));
+                if choice.clicked() {
+                    scope = "entireBook".into();
+                }
+            });
+    });
+    if scope != old_scope || d.s("_sourceScope") != scope {
+        d.fields.insert("scope".into(), json!(scope));
+        d.fields.insert("other".into(), json!(""));
+        refresh_toc_sources(app, d);
+    }
+    let entire_book = scope == "entireBook";
+    if entire_book {
+        crate::rtl::label(ui, tr("Entire Book requires stable numbering and fixed TOC space. Update after changes."));
+    }
     let styles: Vec<String> = d.fields.get("styles").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+    let output_styles: Vec<String> =
+        d.fields.get("localStyles").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_else(|| styles.clone());
     let char_styles: Vec<String> = d.fields.get("charStyles").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
     let mut rows = toc_rows(d);
     let mut sel = d.n("selected").map_or(0, |n| n.max(0.0) as usize);
@@ -6892,7 +6952,7 @@ fn toc_dialog(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
         crate::rtl::label(ui, tr("Title:"));
         text_field(ui, d, "title", 200.0);
         crate::rtl::label(ui, tr("Style:"));
-        toc_style_combo(ui, "title", &styles, "TOC Title", &mut title_style);
+        toc_style_combo(ui, "title", &output_styles, "TOC Title", &mut title_style);
         ui.end_row();
     });
     ui.add_space(8.0);
@@ -6947,7 +7007,7 @@ fn toc_dialog(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
         egui::Grid::new("toc_entry").num_columns(4).spacing([8.0, 6.0]).show(ui, |ui| {
             crate::rtl::label(ui, tr("Entry Style:"));
             let auto = format!("TOC Level {}", r.level.clamp(1, 9));
-            toc_style_combo(ui, "entry", &styles, &auto, &mut r.entry_style);
+            toc_style_combo(ui, "entry", &output_styles, &auto, &mut r.entry_style);
             ui.end_row();
             crate::rtl::label(ui, tr("Page Number:"));
             let choices = [("after", "After Entry"), ("before", "Before Entry"), ("none", "No Page Number")];
@@ -6968,7 +7028,13 @@ fn toc_dialog(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
             toc_style_combo(ui, "separator", &char_styles, none, &mut r.separator_style);
             ui.end_row();
             crate::rtl::label(ui, "");
-            ui.checkbox(&mut r.sort, tr("Sort Entries in Alphabetical Order"));
+            let mut sort = !entire_book && r.sort;
+            ui.add_enabled_ui(!entire_book, |ui| ui.checkbox(&mut sort, tr("Sort Entries in Alphabetical Order")))
+                .response
+                .on_hover_text(tr("Entire Book preserves Book document order."));
+            if !entire_book {
+                r.sort = sort;
+            }
             ui.end_row();
             crate::rtl::label(ui, tr("Level:"));
             craft_ui::ComboBox::from_id_salt("toc_level").selected_text(r.level.to_string()).width(60.0).show_ui(ui, |ui| {

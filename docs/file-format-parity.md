@@ -1,6 +1,6 @@
 # File format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-19 · **Change:** minor (PDF/X-4 visible unembedded font detection, #909; IDML liquid guide types, #872; .indd and .indt open through indd-utils; XLSX cached values preserve numeric precision and text; shared print spooler; Windows CI passes; content-indexed asset deduplication, #727) · **Target:** Adobe InDesign 2026 (21.6)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-30 · **Change:** minor (stable-layout Book TOC scope; PDF/X-4 visible unembedded font detection, #909; IDML liquid guide types, #872; .indd and .indt open through indd-utils; XLSX cached values preserve numeric precision and text; shared print spooler; Windows CI passes; content-indexed asset deduplication, #727) · **Target:** Adobe InDesign 2026 (21.6)
 
 Every format InDesign 2026 reads or writes, with DesignCraft's support, fidelity and tests. The
 InDesign list comes from its bundle's `Info.plist` (`CFBundleDocumentTypes`,
@@ -14,6 +14,11 @@ largest gaps are that neither `.indd` opening nor IDML is measured on real files
 Read/Write: **✓** supported · **~** partial · **✗** missing · **—** InDesign doesn't either.
 Weight: what share of an InDesign professional's file traffic the format carries (used for the
 score below).
+
+Native format 5 preserves Entire Book TOC scope so older readers cannot silently regenerate it as a document-local TOC. Current Document retains its prior minimum format requirement. IDML TOC styles map the scope through `IncludeBookDocuments` in both directions; collection still requires an open Book and stable numbering.
+Books retain their existing JSON manifest structure. The optional `numberingNeedsUpdate` boolean
+defaults to false when absent; a reorder sets it until Update Numbering succeeds. Old documents
+and Books load without migration.
 
 ## Documents and interchange
 

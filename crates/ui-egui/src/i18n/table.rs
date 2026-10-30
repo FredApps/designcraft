@@ -1,6 +1,49 @@
 /// English → [German, French, Spanish, Japanese, Simplified Chinese].
 pub(super) const TABLE: &[(&str, [&str; 5])] = &[
     (
+        "Click to open; drag to reorder",
+        [
+            "Zum Öffnen klicken; zum Umsortieren ziehen",
+            "Cliquez pour ouvrir ; faites glisser pour réorganiser",
+            "Haga clic para abrir; arrastre para reordenar",
+            "クリックして開く、ドラッグして並べ替え",
+            "单击打开；拖动调整顺序",
+        ],
+    ),
+    (
+        "Order changed: Update Numbering, then update the Table of Contents.",
+        [
+            "Reihenfolge geändert: Nummerierung und danach das Inhaltsverzeichnis aktualisieren.",
+            "Ordre modifié : mettez à jour la numérotation, puis la table des matières.",
+            "Orden cambiado: actualice la numeración y después el índice.",
+            "順序が変更されました。ページ番号を更新してから目次を更新してください。",
+            "顺序已更改：请先更新编号，再更新目录。",
+        ],
+    ),
+    ("Scope:", ["Umfang:", "Portée :", "Ámbito:", "対象範囲：", "范围："]),
+    ("Current Document", ["Aktuelles Dokument", "Document actif", "Documento actual", "現在のドキュメント", "当前文档"]),
+    ("Entire Book", ["Gesamtes Buch", "Livre entier", "Libro completo", "ブック全体", "整本书"]),
+    (
+        "Entire Book requires stable numbering and fixed TOC space. Update after changes.",
+        [
+            "Das gesamte Buch erfordert eine stabile Nummerierung und festen Platz für das Inhaltsverzeichnis. Nach Änderungen aktualisieren.",
+            "Le livre entier nécessite une numérotation stable et un espace fixe pour la table des matières. Actualisez après les modifications.",
+            "El libro completo requiere numeración estable y espacio fijo para el índice. Actualice después de los cambios.",
+            "ブック全体では、確定したページ番号と目次用の固定領域が必要です。変更後は更新してください。",
+            "整本书需要稳定的页码和固定的目录空间。更改后请更新。",
+        ],
+    ),
+    (
+        "Entire Book preserves Book document order.",
+        [
+            "Das gesamte Buch behält die Dokumentreihenfolge bei.",
+            "Le livre entier conserve l’ordre des documents du livre.",
+            "El libro completo conserva el orden de los documentos.",
+            "ブック全体ではブック内のドキュメント順を保持します。",
+            "整本书保留书内文档的顺序。",
+        ],
+    ),
+    (
         "Character Formatting Controls",
         [
             "Steuerelemente für Zeichenformatierung",

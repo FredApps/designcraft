@@ -15,6 +15,8 @@ pub struct Book {
     pub documents: Vec<String>,
     /// Index of the style source document.
     pub style_source: usize,
+    /// A manifest reorder requires an explicit successful Update Numbering before a Book TOC.
+    pub numbering_needs_update: bool,
 }
 
 fn has_book(s: &Session) -> std::result::Result<(), String> {
@@ -47,6 +49,93 @@ fn chapter(b: &Book, path: &str) -> Result<String> {
 /// Every chapter's file ([`chapter`]), in order.
 fn chapters(b: &Book) -> Result<Vec<String>> {
     b.documents.iter().map(|path| chapter(b, path)).collect()
+}
+
+/// The same canonical identity policy is used for membership, duplicate detection and open tabs.
+#[cfg(not(target_arch = "wasm32"))]
+fn identity(path: &str) -> Result<std::path::PathBuf> {
+    crate::io::canonicalize(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))
+}
+
+/// Membership of the active document in the open Book is independent of other chapters' availability.
+/// Inaccessible entries cannot establish membership; full collection still validates every entry.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn active_member(s: &Session) -> Result<usize> {
+    let b = s.book.as_ref().ok_or_else(|| bad("toc", "Entire Book requires an open Book containing the active document"))?;
+    if b.documents.len() > MAX_BATCH_CHAPTERS {
+        return Err(bad("toc", "Entire Book supports at most 4096 chapters"));
+    }
+    let active = s.doc()?;
+    let path = active.path.as_deref().ok_or_else(|| bad("toc", "save the active document and add it to the open Book first"))?;
+    let active_identity = identity(path)?;
+    let mut seen = std::collections::HashSet::new();
+    let mut member = None;
+    for (i, stored) in b.documents.iter().enumerate() {
+        let Ok(resolved) = chapter(b, stored).and_then(|path| identity(&path)) else { continue };
+        if !seen.insert(resolved.clone()) {
+            return Err(bad("toc", format!("duplicate Book chapter: {stored}")));
+        }
+        if resolved == active_identity {
+            member = Some(i);
+        }
+    }
+    member.ok_or_else(|| bad("toc", "the active document is not a member of the currently open Book"))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn active_member(_: &Session) -> Result<usize> {
+    Err(bad("toc", "Entire Book requires a native file system"))
+}
+
+/// Complete traversal is stricter than membership: no missing/refused chapter may be skipped.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn toc_paths(s: &Session) -> Result<(Vec<String>, usize)> {
+    let member = active_member(s)?;
+    let b = s.book.as_ref().ok_or_else(no_book)?;
+    let paths = chapters(b)?;
+    for path in &paths {
+        identity(path)?;
+    }
+    Ok((paths, member))
+}
+
+/// Read-only, bounded-memory chapter traversal. The active chapter comes from its live model;
+/// other open chapters are refused, never read from potentially stale backing files.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn visit_toc(s: &Session, mut visit: impl FnMut(&str, &designcraft_doc::Document) -> Result<()>) -> Result<()> {
+    let (paths, member) = toc_paths(s)?;
+    let active = s.doc()?;
+    // Preflight every open identity before collecting any chapter.
+    for (i, path) in paths.iter().enumerate() {
+        let chapter_identity = identity(path)?;
+        for open in &s.docs {
+            if open.uid != active.uid && open.path.as_ref().is_some_and(|p| identity(p).is_ok_and(|p| p == chapter_identity)) {
+                return Err(bad("toc", format!("Book chapter {path} is open; save and close other Book chapters before using Entire Book")));
+            }
+        }
+        if i == member && active.interaction.is_some() {
+            return Err(bad("toc", "finish the active document interaction before using Entire Book"));
+        }
+    }
+    for (i, path) in paths.iter().enumerate() {
+        if i == member {
+            visit(path, &active.doc)?;
+        } else {
+            let mut d = load(path)?;
+            let (fonts, _, warnings) = super::file::load_document_fonts(&mut d, path);
+            if !warnings.is_empty() {
+                return Err(bad("toc", format!("cannot guarantee Book heading layout in {path}: {}", warnings.join("; "))));
+            }
+            visit(path, &d)?;
+            drop(fonts);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn visit_toc(_: &Session, _: impl FnMut(&str, &designcraft_doc::Document) -> Result<()>) -> Result<()> {
+    Err(bad("toc", "Entire Book requires a native file system"))
 }
 
 fn load(path: &str) -> Result<designcraft_doc::Document> {
@@ -275,6 +364,15 @@ pub fn specs() -> Vec<CommandSpec> {
             s.book = Some(b);
             Ok(json!({"documents": n}))
         }),
+        cmd!(noundo "book.openDocument", "Open Book Document", [], None,
+        "{index} — open the chapter at this zero-based Book index, resolving its path relative to the Book file", has_book, |s, p| {
+            let index = p.get("index").and_then(Value::as_u64).and_then(|i| usize::try_from(i).ok())
+                .ok_or_else(|| bad("book.openDocument", "`index` required"))?;
+            let b = s.book.as_ref().ok_or_else(no_book)?;
+            let stored = b.documents.get(index).ok_or_else(|| bad("book.openDocument", format!("no document {index}")))?;
+            let path = chapter(b, stored)?;
+            s.execute("file.open", &json!({"path": path}))
+        }),
         cmd!(noundo "book.close", "Close Book", [], None, "{}", has_book, |s, _| {
             s.book = None;
             ok()
@@ -288,6 +386,31 @@ pub fn specs() -> Vec<CommandSpec> {
             save(&b)?;
             s.book = Some(b);
             ok()
+        }),
+        cmd!(noundo "book.move", "Move Book Document", [], None,
+        "{from, to} — zero-based indices; to is the final index after removal (0..document count). Saves only the manifest; then Update Numbering and TOC", has_book, |s, p| {
+            let index = |key| p.get(key).and_then(Value::as_u64).and_then(|i| usize::try_from(i).ok())
+                .ok_or_else(|| bad("book.move", format!("`{key}` must be a non-negative index")));
+            let from = index("from")?;
+            let to = index("to")?;
+            let mut b = s.book.as_ref().ok_or_else(no_book)?.clone();
+            if from >= b.documents.len() || to >= b.documents.len() {
+                return Err(bad("book.move", "source and destination must be existing document indices"));
+            }
+            if from == to {
+                return Ok(json!({"moved": false, "numberingNeedsUpdate": b.numbering_needs_update}));
+            }
+            let document = b.documents.remove(from);
+            b.documents.insert(to, document);
+            b.style_source = if b.style_source == from { to }
+                else if from < b.style_source && b.style_source <= to { b.style_source.saturating_sub(1) }
+                else if to <= b.style_source && b.style_source < from { b.style_source.saturating_add(1) }
+                else { b.style_source };
+            b.numbering_needs_update = true;
+            // Commit the cloned manifest atomically before publishing any changed session state.
+            save(&b)?;
+            s.book = Some(b);
+            Ok(json!({"moved": true, "numberingNeedsUpdate": true}))
         }),
         cmd!(noundo "book.remove", "Remove Document", [], None, "{index}", has_book, |s, p| {
             let i = p.get("index").and_then(Value::as_u64).ok_or_else(|| bad("book.remove", "`index` required"))? as usize;
@@ -323,10 +446,17 @@ pub fn specs() -> Vec<CommandSpec> {
                 docs.push(json!({"path": p, "pages": pages, "firstPage": first}));
                 first = first.saturating_add(pages);
             }
-            Ok(json!({"path": b.path, "styleSource": b.style_source, "documents": docs}))
+            Ok(json!({"path": b.path, "styleSource": b.style_source, "numberingNeedsUpdate": b.numbering_needs_update, "documents": docs}))
         }),
         cmd!(noundo "book.paginate", "Update Numbering", [], None, "{} — each document starts numbering where the previous one ended, and takes its chapter number (automatic: one more than the previous document's; same as previous; or its own start) (files are saved) → {pages, chapters}", has_book, |s, _| {
-            paginate(s)
+            let result = paginate(s)?;
+            let mut b = s.book.as_ref().ok_or_else(no_book)?.clone();
+            if b.numbering_needs_update {
+                b.numbering_needs_update = false;
+                save(&b)?;
+                s.book = Some(b);
+            }
+            Ok(result)
         }),
         cmd!(noundo "book.syncStyles", "Synchronize Book", [], None, "{} — paragraph and character styles and swatches of the style source go into every document (by name)", has_book, |s, _| {
             sync_styles(s)
@@ -363,6 +493,73 @@ mod tests {
     use serde_json::json;
 
     use crate::Session;
+
+    fn reorder_fixture() -> std::result::Result<(tempfile::TempDir, Session), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("order.dcbook");
+        std::fs::write(&path, serde_json::to_vec(&json!({"documents":["A", "B", "C", "D", "E"], "styleSource":1}))?)?;
+        let mut s = Session::new();
+        s.execute("book.open", &json!({"path":path}))?;
+        Ok((dir, s))
+    }
+
+    #[test]
+    fn book_move_final_index_persists_reload_and_preserves_source() {
+        for (from, to, expected) in [
+            (0, 4, vec!["B", "C", "D", "E", "A"]),
+            (4, 0, vec!["E", "A", "B", "C", "D"]),
+            (3, 1, vec!["A", "D", "B", "C", "E"]),
+            (1, 3, vec!["A", "C", "D", "B", "E"]),
+            (2, 2, vec!["A", "B", "C", "D", "E"]),
+        ] {
+            let (_dir, mut s) = reorder_fixture().unwrap();
+            let path = s.book.as_ref().unwrap().path.clone();
+            let before = std::fs::read(&path).unwrap();
+            let result = s.execute("book.move", &json!({"from":from, "to":to})).unwrap();
+            assert_eq!(result["moved"], from != to);
+            let b = s.book.as_ref().unwrap();
+            assert_eq!(b.documents, expected);
+            assert_eq!(b.documents[b.style_source], "B");
+            assert_eq!(b.numbering_needs_update, from != to);
+            if from == to {
+                assert_eq!(std::fs::read(&path).unwrap(), before);
+            }
+            s.execute("book.close", &json!({})).unwrap();
+            s.execute("book.open", &json!({"path":path})).unwrap();
+            let b = s.book.as_ref().unwrap();
+            assert_eq!(b.documents, expected);
+            assert_eq!(b.documents[b.style_source], "B");
+            assert_eq!(b.numbering_needs_update, from != to);
+        }
+    }
+
+    #[test]
+    fn book_move_invalid_indices_and_save_failure_leave_state_unchanged() {
+        let (dir, mut s) = reorder_fixture().unwrap();
+        let path = s.book.as_ref().unwrap().path.clone();
+        let before = std::fs::read(&path).unwrap();
+        for params in [
+            json!({"from":5,"to":0}),
+            json!({"from":0,"to":5}),
+            json!({"from":-1,"to":0}),
+            json!({"from":0,"to":-1}),
+            json!({"from":0}),
+            json!({"from":u64::MAX,"to":0}),
+        ] {
+            assert!(s.execute("book.move", &params).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            assert_eq!(s.book.as_ref().unwrap().documents, ["A", "B", "C", "D", "E"]);
+        }
+        // A directory is an unwritable manifest destination on every supported platform.
+        s.book.as_mut().unwrap().path = dir.path().to_string_lossy().into_owned();
+        let error = s.execute("book.move", &json!({"from":0,"to":4})).unwrap_err();
+        assert!(!error.to_string().is_empty());
+        let b = s.book.as_ref().unwrap();
+        assert_eq!(b.documents, ["A", "B", "C", "D", "E"]);
+        assert_eq!(b.style_source, 1);
+        assert!(!b.numbering_needs_update);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
 
     #[test]
     fn book_numbering_resolves_chapter_numbers_in_order() {
