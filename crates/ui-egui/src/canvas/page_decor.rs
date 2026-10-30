@@ -86,18 +86,12 @@ fn draw_bleed_and_slug(painter: &egui::Painter, xf: &Xf, doc: &Document, slot: &
     }
 }
 
-/// The spine: a hairline where the pages of a spread meet, the full height of the taller page, in
-/// the spread edge's colour ([`PAGE_EDGE`]). Screen only, like the other guides; the paper is one
-/// rectangle and exports never show a seam.
+/// The spine: a hairline at each edge where two pages of a spread meet
+/// ([`designcraft_doc::Spread::page_seams`]), in the spread edge's colour ([`PAGE_EDGE`]). Screen
+/// only, like the other guides; the paper is one rectangle and exports never show a seam.
 fn draw_spine(painter: &egui::Painter, xf: &Xf, slot: &SpreadSlot, sp: &designcraft_doc::Spread) {
     let pt = |p: Point| xf.to_screen(slot.xf * p);
-    for pair in sp.pages.windows(2) {
-        // Bound right to left, a spread lists its right page first: take the two edges that
-        // meet, whichever page comes first.
-        let (a, b) = (pair[0].bounds(), pair[1].bounds());
-        let (left, right) = if a.x0 <= b.x0 { (a, b) } else { (b, a) };
-        let x = (left.x1 + right.x0) / 2.0;
-        let (y0, y1) = (a.y0.min(b.y0), a.y1.max(b.y1));
+    for (x, y0, y1) in sp.page_seams() {
         painter.line_segment([pt(Point::new(x, y0)), pt(Point::new(x, y1))], Stroke::new(hair(painter), PAGE_EDGE));
     }
 }
