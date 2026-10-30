@@ -444,25 +444,37 @@ pub(super) fn finish_save(s: &mut Session) -> Result<()> {
         return Ok(());
     }
     let Some(book) = &s.book else { return Ok(()) };
-    if identity(&book.path)? != pending.book_identity {
+    if identity(&book.path).map_err(saved_toc_error)? != pending.book_identity {
         return Ok(());
     }
     let expected = pending.state.clone();
-    let st = s.doc()?;
+    let st = s.doc().map_err(saved_toc_error)?;
     let Ok(snapshot) = Snapshot::load_with(s, false, Some(((*st.doc).clone(), st.selection.clone()))) else { return Ok(()) };
     // Undo, later edits or changed sources must not publish the old pending confirmation.
-    let active_chapter = snapshot.chapters.get(snapshot.toc_index()?).ok_or_else(|| bad("file.save", "TOC snapshot missing"))?;
-    if active_chapter.original != value(&active_chapter.doc)? {
-        return Err(bad("file.save", "Saved TOC file changed before Book freshness could be recorded; retry."));
+    let active_chapter = snapshot
+        .chapters
+        .get(snapshot.toc_index().map_err(saved_toc_error)?)
+        .ok_or_else(|| saved_toc_error(bad("file.save", "TOC snapshot missing")))?;
+    if active_chapter.original != value(&active_chapter.doc).map_err(saved_toc_error)? {
+        return Err(saved_toc_error(bad("file.save", "Saved TOC file changed before Book freshness could be recorded; retry.")));
     }
-    if snapshot.signature()? != expected {
+    if snapshot.signature().map_err(saved_toc_error)? != expected {
         return Ok(());
     }
-    snapshot.verify(s)?;
+    publish_saved_toc(s, snapshot, expected)
+}
+
+fn saved_toc_error(error: EngineError) -> EngineError {
+    bad("file.save", format!("Document saved, but Book TOC freshness was not recorded: {error}"))
+}
+
+/// Recheck the saved snapshot immediately before publishing its freshness checkpoint.
+fn publish_saved_toc(s: &mut Session, snapshot: Snapshot, expected: Value) -> Result<()> {
+    snapshot.verify(s).map_err(saved_toc_error)?;
     let mut book = snapshot.book;
     book.numbering_needs_update = false;
     book.toc_state = Some(expected);
-    save(&book).map_err(|e| bad("file.save", format!("Document saved, but Book TOC freshness was not recorded: {e}")))?;
+    save(&book).map_err(saved_toc_error)?;
     s.book = Some(book);
     Ok(())
 }

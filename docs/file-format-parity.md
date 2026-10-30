@@ -23,8 +23,9 @@ and Books load without migration. A successful Book TOC refresh also saves a bou
 versioned semantic `tocState` checkpoint in the `.dcbook` manifest. Freshness is recomputed from
 current sources and a scratch formatting/layout pass; the checkpoint records provenance so even
 identity/configuration changes producing identical text are detected. Missing/unknown checkpoints
-require one explicit Book refresh before exporting a Book containing an Entire Book TOC. No native
-`.designcraft` version bump or Current Document TOC migration is required. Active Generate/Update
+require one explicit Book refresh before exporting a Book containing an Entire Book TOC. Current
+Document TOCs retain their previous minimum native-format requirement and need no migration; Entire
+Book scope requires native format 5. Stabilization adds no further format-version bump. Active Generate/Update
 retains confirmation in the session until normal Save validates the saved model and current sources;
 unsaved adoption never publishes disk freshness.
 

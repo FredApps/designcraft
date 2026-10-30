@@ -627,3 +627,88 @@ fn active_source_or_manifest_conflict_prevents_adoption_and_commit() -> TestResu
     }
     Ok(())
 }
+
+fn pending_save_fixture(root: &std::path::Path, name: &str) -> TestResult<BookFixture> {
+    let mut f = BookFixture::new(root, name, vec![("toc", toc_document(160.0, 140.0, true, "\t")), ("head", chapter("Head", 2, 1)?)])?;
+    f.s.execute("toc.update", &json!({}))?;
+    assert!(f.s.pending_book_toc.is_some());
+    Ok(f)
+}
+
+fn assert_saved_without_freshness(f: &BookFixture) -> TestResult {
+    assert!(!f.s.doc()?.is_dirty());
+    assert_eq!(value(&read(f, "toc")?)?, value(&f.s.doc()?.doc)?);
+    assert!(f.s.book.as_ref().ok_or("Book")?.toc_state.is_none());
+    Ok(())
+}
+
+#[test]
+fn post_save_identity_failure_preserves_saved_document_and_error_cause() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let mut f = pending_save_fixture(root.path(), "identity-error")?;
+    let manifest = f.dir.join("test.dcbook");
+    let moved = f.dir.join("moved.dcbook");
+    std::fs::rename(&manifest, &moved)?;
+    let cause = identity(manifest.to_str().ok_or("path")?).err().ok_or("identity should fail")?.to_string();
+    let error = f.s.execute("file.save", &json!({})).expect_err("freshness cannot identify the missing Book");
+    assert!(matches!(error, EngineError::BadParams { ref cmd, .. } if cmd == "file.save"));
+    let message = error.to_string();
+    assert!(message.contains("Document saved, but Book TOC freshness was not recorded:"), "{message}");
+    assert!(message.contains(&cause), "{message}");
+    assert_saved_without_freshness(&f)?;
+    let book: Value = serde_json::from_slice(&std::fs::read(moved)?)?;
+    assert!(book.get("tocState").is_none_or(Value::is_null));
+    Ok(())
+}
+
+#[test]
+fn post_save_snapshot_conflict_preserves_saved_document_and_error_cause() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let mut f = pending_save_fixture(root.path(), "verification-error")?;
+    // Save normally, then reproduce an external change between snapshot loading and final verification.
+    let pending = f.s.pending_book_toc.take().ok_or("pending confirmation")?;
+    f.s.execute("file.save", &json!({}))?;
+    let st = f.s.doc()?;
+    let snapshot = Snapshot::load_with(&f.s, false, Some(((*st.doc).clone(), st.selection.clone())))?;
+    f.s.pending_book_toc = Some(pending);
+    let path = f.dir.join("head.designcraft");
+    let mut changed = std::fs::read(&path)?;
+    changed.push(b' ');
+    std::fs::write(&path, &changed)?;
+    let expected = f.s.pending_book_toc.as_ref().ok_or("pending")?.state.clone();
+    let error = publish_saved_toc(&mut f.s, snapshot, expected).expect_err("changed source cannot publish freshness");
+    let message = error.to_string();
+    assert!(message.contains("Document saved, but Book TOC freshness was not recorded:"), "{message}");
+    assert!(message.contains("Book source") && message.contains("head.designcraft") && message.contains("changed during processing"), "{message}");
+    assert_saved_without_freshness(&f)?;
+    assert_eq!(std::fs::read(path)?, changed);
+    let book: Value = serde_json::from_slice(&std::fs::read(f.dir.join("test.dcbook"))?)?;
+    assert!(book.get("tocState").is_none_or(Value::is_null));
+    Ok(())
+}
+
+#[test]
+fn post_save_nonmatching_pending_confirmation_remains_a_noop() -> TestResult {
+    let root = tempfile::tempdir()?;
+    for case in ["no-pending", "other-document", "other-book"] {
+        let mut f = pending_save_fixture(root.path(), case)?;
+        match case {
+            "no-pending" => {
+                f.s.pending_book_toc = None;
+            }
+            "other-document" => {
+                f.s.pending_book_toc.as_mut().ok_or("pending")?.uid += 1;
+            }
+            _ => {
+                let other = f.dir.join("other.dcbook");
+                std::fs::copy(f.dir.join("test.dcbook"), &other)?;
+                f.s.book.as_mut().ok_or("Book")?.path = other.to_string_lossy().into_owned();
+            }
+        }
+        let before = bytes(&f)?;
+        f.s.execute("file.save", &json!({}))?;
+        assert_saved_without_freshness(&f)?;
+        assert_eq!(std::fs::read(&before[0].0)?, before[0].1, "{case}: Book must not be rewritten");
+    }
+    Ok(())
+}

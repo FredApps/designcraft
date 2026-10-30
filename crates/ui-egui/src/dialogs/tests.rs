@@ -3863,3 +3863,39 @@ fn book_export_fresh_toc_succeeds_and_stale_toc_alert_preserves_error_result() {
     assert!(app.run("app.exportBookPdf", json!({"path":stale})).is_err(), "a failed accepted destination is not Ok(null)");
     assert_eq!(std::fs::read(dir.path().join("toc.designcraft")).unwrap(), before);
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn book_panel_generic_reminder_covers_pending_toc_and_reorder() {
+    const MESSAGE: &str = "Book numbering or TOC needs updating: save the TOC, Update Numbering or Refresh Table of Contents.";
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = book_export_test_app(dir.path(), true);
+    let original_order = app.session.book.as_ref().unwrap().documents.clone();
+    app.run("book.openDocument", json!({"index":0})).unwrap();
+    app.run("toc.update", json!({})).unwrap();
+    assert_eq!(app.session.book.as_ref().unwrap().documents, original_order);
+    assert!(app.session.book.as_ref().unwrap().numbering_needs_update);
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0));
+    let body = |app: &mut DesignApp, ui: &mut egui::Ui| crate::panels::library::book(app, ui);
+    for &(lang, _) in crate::i18n::LANGUAGES {
+        app.ui.language = lang.into();
+        let ctx = dialog_context(lang);
+        test_ui_frame(&mut app, &ctx, screen, vec![], body);
+        let labels = test_ui_frame(&mut app, &ctx, screen, vec![], body);
+        let message = crate::i18n::tr(lang, MESSAGE);
+        if matches!(lang, "de" | "fr" | "es" | "ja" | "zh") {
+            assert_ne!(message, MESSAGE, "{lang}: translation must be available");
+        }
+        visible_label(&labels, screen, message);
+        assert!(!labels.iter().any(|(text, _, _)| text.contains("Order changed")));
+    }
+    app.ui.language = "".into();
+    let ctx = dialog_context("");
+    app.run("file.save", json!({})).unwrap();
+    let labels = test_ui_frame(&mut app, &ctx, screen, vec![], body);
+    assert!(!labels.iter().any(|(text, _, _)| text == MESSAGE));
+    app.run("file.close", json!({})).unwrap();
+    app.run("book.move", json!({"from":1,"to":0})).unwrap();
+    let labels = test_ui_frame(&mut app, &ctx, screen, vec![], body);
+    visible_label(&labels, screen, MESSAGE);
+}

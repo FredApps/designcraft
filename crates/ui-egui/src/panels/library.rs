@@ -192,8 +192,11 @@ pub fn book(app: &mut DesignApp, ui: &mut egui::Ui) {
     if info["numberingNeedsUpdate"].as_bool() == Some(true) {
         crate::rtl::label(
             ui,
-            egui::RichText::new(crate::i18n::tr(&app.ui.language, "Order changed: Update Numbering, then update the Table of Contents."))
-                .color(t.accent),
+            egui::RichText::new(crate::i18n::tr(
+                &app.ui.language,
+                "Book numbering or TOC needs updating: save the TOC, Update Numbering or Refresh Table of Contents.",
+            ))
+            .color(t.accent),
         );
     }
     let book_path = info["path"].as_str().unwrap_or_default();
