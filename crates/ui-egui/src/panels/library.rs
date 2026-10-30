@@ -140,13 +140,21 @@ fn book_action_buttons(app: &mut DesignApp, ui: &mut egui::Ui) {
         if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Update Numbering"))).clicked() {
             let _ = app.run("book.paginate", json!({}));
         }
+        let availability = designcraft_engine::find_command("book.refreshToc").map(|c| c.info(&app.session));
+        let refresh = ui.add_enabled(
+            availability.as_ref().is_some_and(|c| c.enabled),
+            egui::Button::new(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Refresh Table of Contents"))),
+        );
+        if refresh.on_disabled_hover_text(availability.and_then(|c| c.disabled_reason).unwrap_or_default()).clicked()
+            && app.run("book.refreshToc", json!({})).is_ok()
+        {
+            app.status(crate::i18n::tr(&app.ui.language, "Book Table of Contents refreshed.").to_string());
+        }
         if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Synchronize"))).clicked() {
             let _ = app.run("book.syncStyles", json!({}));
         }
         if ui.button(crate::rtl::widget(ui, crate::i18n::tr(&app.ui.language, "Export PDF…"))).clicked() {
-            let asked = app.ask_save("Book.pdf", Bound::App, |app, path| {
-                app.run("book.exportPdf", json!({"path": path})).or_else(|e| report_err(app, "Book", e))
-            });
+            let asked = app.run("app.exportBookPdf", json!({}));
             report(app, "Book", asked);
         }
     });

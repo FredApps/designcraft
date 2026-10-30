@@ -3567,7 +3567,11 @@ fn toc_dialog_scope_membership_remote_styles_and_saved_preselection() {
     let params = toc_params(&app, &d);
     assert_eq!(params["scope"], "entireBook");
     assert!(params["entries"][0].get("sort").is_none(), "UI cannot request global Book sorting");
-    app.run("toc.generate", params).unwrap();
+    app.ui.status = "previous failed attempt".into();
+    app.ui.dialog = Some(d);
+    assert_eq!(confirm(&mut app).unwrap()["pendingSave"], true);
+    assert!(app.ui.status.is_empty());
+    assert!(app.session.doc().unwrap().is_dirty());
     open_toc(&mut app);
     let mut d = app.ui.dialog.take().unwrap();
     assert_eq!(d.s("scope"), "entireBook");
@@ -3683,4 +3687,179 @@ fn book_panel_drag_reorders_without_opening_and_click_still_opens() {
         }
         assert_eq!(std::path::Path::new(app.session.doc().unwrap().path.as_deref().unwrap()).file_name().unwrap(), "B.designcraft");
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn book_panel_refresh_requires_closed_participants_and_runs_the_engine_operation() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+    app.run("file.new", json!({})).unwrap();
+    app.run("style.paragraph.create", json!({"name":"Head"})).unwrap();
+    let frame = app.run("frame.create", json!({"rect":[36,36,400,400],"content":"text","text":"Chapter"})).unwrap();
+    app.run("text.select", json!({"story":frame["story"],"anchor":0,"focus":0})).unwrap();
+    app.run("style.paragraph.apply", json!({"name":"Head"})).unwrap();
+    app.run("file.saveAs", json!({"path":dir.path().join("chapter.designcraft")})).unwrap();
+    app.run("file.close", json!({})).unwrap();
+    app.run("file.new", json!({})).unwrap();
+    app.run("file.saveAs", json!({"path":dir.path().join("toc.designcraft")})).unwrap();
+    app.run("file.close", json!({})).unwrap();
+    app.run("book.new", json!({"path":dir.path().join("book.dcbook")})).unwrap();
+    for name in ["toc.designcraft", "chapter.designcraft"] {
+        app.run("book.add", json!({"path":dir.path().join(name)})).unwrap();
+    }
+    app.run("book.paginate", json!({})).unwrap();
+    app.run("book.openDocument", json!({"index":0})).unwrap();
+    app.run("toc.generate", json!({"scope":"entireBook","styles":["Head"]})).unwrap();
+    app.run("file.save", json!({})).unwrap();
+    let info = designcraft_engine::find_command("book.refreshToc").unwrap().info(&app.session);
+    assert!(!info.enabled);
+    assert!(info.disabled_reason.unwrap().contains("close"));
+    let ctx = dialog_context("en");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0));
+    let body = |app: &mut DesignApp, ui: &mut egui::Ui| crate::panels::library::book(app, ui);
+    test_ui_frame(&mut app, &ctx, screen, vec![], body);
+    let labels = test_ui_frame(&mut app, &ctx, screen, vec![], body);
+    assert!(labels.iter().any(|(label, _, _)| label == "Refresh Table of Contents"));
+    app.run("file.close", json!({})).unwrap();
+    let labels = test_ui_frame(&mut app, &ctx, screen, vec![], body);
+    let point = visible_label(&labels, screen, "Refresh Table of Contents").center();
+    for pressed in [true, false] {
+        test_ui_frame(
+            &mut app,
+            &ctx,
+            screen,
+            vec![
+                egui::Event::PointerMoved(point),
+                egui::Event::PointerButton { pos: point, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE },
+            ],
+            body,
+        );
+    }
+    assert_eq!(app.run("book.tocFreshness", json!({})).unwrap()["fresh"], true);
+    assert!(app.session.book.as_ref().unwrap().toc_state.is_some());
+    assert!(app.session.active().is_none());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn book_export_test_app(dir: &std::path::Path, toc: bool) -> DesignApp {
+    let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+    app.run("file.new", json!({})).unwrap();
+    app.run("style.paragraph.create", json!({"name":"Head"})).unwrap();
+    let frame = app.run("frame.create", json!({"rect":[36,36,400,400],"content":"text","text":"Chapter"})).unwrap();
+    app.run("text.select", json!({"story":frame["story"],"anchor":0,"focus":7})).unwrap();
+    app.run("style.paragraph.apply", json!({"name":"Head"})).unwrap();
+    app.run("file.saveAs", json!({"path":dir.join("chapter.designcraft")})).unwrap();
+    app.run("file.close", json!({})).unwrap();
+    if toc {
+        app.run("file.new", json!({})).unwrap();
+        app.run("file.saveAs", json!({"path":dir.join("toc.designcraft")})).unwrap();
+        app.run("file.close", json!({})).unwrap();
+    }
+    app.run("book.new", json!({"path":dir.join("test.dcbook")})).unwrap();
+    if toc {
+        app.run("book.add", json!({"path":dir.join("toc.designcraft")})).unwrap();
+    }
+    app.run("book.add", json!({"path":dir.join("chapter.designcraft")})).unwrap();
+    app.run("book.paginate", json!({})).unwrap();
+    if toc {
+        app.run("book.openDocument", json!({"index":0})).unwrap();
+        app.run("toc.generate", json!({"scope":"entireBook","styles":["Head"]})).unwrap();
+        app.run("file.save", json!({})).unwrap();
+        app.run("file.close", json!({})).unwrap();
+    }
+    app
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn click_book_export(app: &mut DesignApp, destination: Option<String>) {
+    app.answer_dialogs(crate::app::file_dialogs::testing::answer_with(destination));
+    let ctx = dialog_context("en");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0));
+    let body = |app: &mut DesignApp, ui: &mut egui::Ui| crate::panels::library::book(app, ui);
+    test_ui_frame(app, &ctx, screen, vec![], body);
+    let labels = test_ui_frame(app, &ctx, screen, vec![], body);
+    let point = visible_label(&labels, screen, "Export PDF…").center();
+    for pressed in [true, false] {
+        test_ui_frame(
+            app,
+            &ctx,
+            screen,
+            vec![
+                egui::Event::PointerMoved(point),
+                egui::Event::PointerButton { pos: point, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE },
+            ],
+            body,
+        );
+    }
+    app.settle_dialogs();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn book_export_accepted_save_creates_pdf_or_surfaces_member_and_final_write_errors() {
+    for mode in ["valid", "missing", "rename", "cancel"] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = book_export_test_app(dir.path(), false);
+        let path = dir.path().join("Böök – proef.pdf");
+        if mode == "missing" {
+            std::fs::remove_file(dir.path().join("chapter.designcraft")).unwrap();
+        }
+        if mode == "rename" {
+            std::fs::create_dir(&path).unwrap();
+            std::fs::write(path.join("keep"), b"untouched").unwrap();
+        }
+        click_book_export(&mut app, if mode == "cancel" { None } else { Some(path.to_string_lossy().to_string()) });
+        assert!(app.session.active().is_none());
+        if mode == "valid" {
+            assert!(std::fs::read(&path).unwrap().starts_with(b"%PDF-"));
+            assert!(app.ui.dialog.is_none());
+        } else if mode == "cancel" {
+            assert!(!path.exists());
+            assert!(app.ui.dialog.is_none());
+            assert!(app.ui.status.is_empty());
+        } else {
+            let alert = app.ui.dialog.as_ref().unwrap();
+            assert_eq!(alert.id, "alert");
+            assert_eq!(alert.s("file"), path.to_string_lossy());
+            assert!(!alert.s("message").is_empty());
+            if mode == "missing" {
+                assert!(alert.s("message").contains("chapter.designcraft"));
+                assert!(!path.exists());
+            } else {
+                assert_eq!(std::fs::read(path.join("keep")).unwrap(), b"untouched");
+            }
+            assert!(!app.ui.status.is_empty());
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn book_export_fresh_toc_succeeds_and_stale_toc_alert_preserves_error_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = book_export_test_app(dir.path(), true);
+    assert_eq!(app.run("book.tocFreshness", json!({})).unwrap()["fresh"], true);
+    let fresh = dir.path().join("fresh.pdf");
+    click_book_export(&mut app, Some(fresh.to_string_lossy().to_string()));
+    assert!(std::fs::metadata(fresh).unwrap().len() > 100);
+    app.run("book.openDocument", json!({"index":0})).unwrap();
+    app.session
+        .edit(|d, _| {
+            d.toc.as_mut().unwrap().title = "Changed definition".into();
+            Ok(())
+        })
+        .unwrap();
+    app.run("file.save", json!({})).unwrap();
+    app.run("file.close", json!({})).unwrap();
+    assert_eq!(app.run("book.tocFreshness", json!({})).unwrap()["fresh"], false);
+    let before = std::fs::read(dir.path().join("toc.designcraft")).unwrap();
+    let stale = dir.path().join("stale.pdf");
+    click_book_export(&mut app, Some(stale.to_string_lossy().to_string()));
+    assert_eq!(app.ui.dialog.as_ref().unwrap().id, "alert");
+    assert!(app.ui.dialog.as_ref().unwrap().s("message").contains("out of date"));
+    assert!(!stale.exists());
+    app.ui.dialog = None;
+    assert!(app.run("app.exportBookPdf", json!({"path":stale})).is_err(), "a failed accepted destination is not Ok(null)");
+    assert_eq!(std::fs::read(dir.path().join("toc.designcraft")).unwrap(), before);
 }

@@ -1,6 +1,20 @@
 /// English → [German, French, Spanish, Japanese, Simplified Chinese].
 pub(super) const TABLE: &[(&str, [&str; 5])] = &[
     (
+        "Book Table of Contents refreshed.",
+        [
+            "Buch-Inhaltsverzeichnis aktualisiert.",
+            "Table des matières du livre actualisée.",
+            "Índice del libro actualizado.",
+            "ブックの目次を更新しました。",
+            "书籍目录已刷新。",
+        ],
+    ),
+    (
+        "Refresh Table of Contents",
+        ["Inhaltsverzeichnis aktualisieren", "Actualiser la table des matières", "Actualizar índice", "目次を更新", "刷新目录"],
+    ),
+    (
         "Click to open; drag to reorder",
         [
             "Zum Öffnen klicken; zum Umsortieren ziehen",
@@ -24,13 +38,13 @@ pub(super) const TABLE: &[(&str, [&str; 5])] = &[
     ("Current Document", ["Aktuelles Dokument", "Document actif", "Documento actual", "現在のドキュメント", "当前文档"]),
     ("Entire Book", ["Gesamtes Buch", "Livre entier", "Libro completo", "ブック全体", "整本书"]),
     (
-        "Entire Book requires stable numbering and fixed TOC space. Update after changes.",
+        "Entire Book updates numbering and TOC layout automatically. Close other Book documents before updating.",
         [
-            "Das gesamte Buch erfordert eine stabile Nummerierung und festen Platz für das Inhaltsverzeichnis. Nach Änderungen aktualisieren.",
-            "Le livre entier nécessite une numérotation stable et un espace fixe pour la table des matières. Actualisez après les modifications.",
-            "El libro completo requiere numeración estable y espacio fijo para el índice. Actualice después de los cambios.",
-            "ブック全体では、確定したページ番号と目次用の固定領域が必要です。変更後は更新してください。",
-            "整本书需要稳定的页码和固定的目录空间。更改后请更新。",
+            "Das gesamte Buch aktualisiert Nummerierung und Inhaltsverzeichnis automatisch. Schließen Sie vorher die anderen Buchdokumente.",
+            "Le livre entier actualise automatiquement la numérotation et la table des matières. Fermez les autres documents du livre avant l’actualisation.",
+            "El libro completo actualiza automáticamente la numeración y el índice. Cierre los demás documentos del libro antes de actualizar.",
+            "ブック全体のページ番号と目次レイアウトを自動更新します。更新前に他のブックドキュメントを閉じてください。",
+            "整本书会自动更新编号和目录布局。更新前请关闭书籍中的其他文档。",
         ],
     ),
     (

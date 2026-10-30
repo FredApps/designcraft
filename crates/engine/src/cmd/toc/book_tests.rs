@@ -120,7 +120,7 @@ fn entire_book_rejects_missing_membership_invalid_scope_and_global_sorting() {
 }
 
 #[test]
-fn entire_book_refuses_other_open_chapters_and_stale_numbering_without_mutation() {
+fn entire_book_refuses_other_open_chapters_but_refreshes_stale_numbering() {
     let mut f = Fixture::new().unwrap();
     let path = f.dir.path().join("a.designcraft");
     let backing = std::fs::read(&path).unwrap();
@@ -129,7 +129,7 @@ fn entire_book_refuses_other_open_chapters_and_stale_numbering_without_mutation(
     f.session.set_active(0);
     let before = f.session.doc().unwrap().doc.clone();
     let params = f.params();
-    assert!(f.session.execute("toc.generate", &params).unwrap_err().to_string().contains("save and close"));
+    assert!(f.session.execute("toc.generate", &params).unwrap_err().to_string().contains("Close the other"));
     assert!(Arc::ptr_eq(&before, &f.session.doc().unwrap().doc));
     assert_eq!(std::fs::read(&path).unwrap(), backing);
     // Existing disk-write protection stays intact too.
@@ -139,8 +139,8 @@ fn entire_book_refuses_other_open_chapters_and_stale_numbering_without_mutation(
     let mut chapter = f.read("a.designcraft").unwrap();
     chapter.sections.first_mut().unwrap().start_number = Some(1);
     std::fs::write(&path, designcraft_format::save(&chapter).unwrap()).unwrap();
-    assert!(f.session.execute("toc.generate", &params).unwrap_err().to_string().contains("Update Numbering"));
-    assert!(Arc::ptr_eq(&before, &f.session.doc().unwrap().doc));
+    f.session.execute("toc.generate", &params).unwrap();
+    assert!(!Arc::ptr_eq(&before, &f.session.doc().unwrap().doc));
 }
 
 #[test]
@@ -182,7 +182,7 @@ fn entire_book_scope_survives_idml_export_import() {
 }
 
 #[test]
-fn entire_book_rolls_back_growth_from_the_real_smart_reflow_pass() {
+fn entire_book_routes_growth_through_bounded_smart_reflow() {
     let mut f = Fixture::new().unwrap();
     let mut params = f.params();
     params["rect"] = json!([36, 36, 220, 220]);
@@ -199,10 +199,11 @@ fn entire_book_rolls_back_growth_from_the_real_smart_reflow_pass() {
     let revision = f.session.doc().unwrap().revision;
     let undo = f.session.doc().unwrap().history.undo.len();
     let result = f.session.execute("toc.update", &json!({}));
-    assert!(result.unwrap_err().to_string().contains("stabilization"));
-    assert!(Arc::ptr_eq(&before, &f.session.doc().unwrap().doc));
-    assert_eq!(f.session.doc().unwrap().revision, revision);
-    assert_eq!(f.session.doc().unwrap().history.undo.len(), undo);
+    assert!(result.is_ok(), "{result:?}");
+    assert!(f.session.doc().unwrap().doc.page_count() > before.page_count());
+    assert!(f.session.doc().unwrap().revision > revision);
+    assert_eq!(f.session.doc().unwrap().history.undo.len(), undo + 1);
+    assert!(validate_book_layout(&before, &f.session.doc().unwrap().doc).is_err());
 }
 
 #[test]
@@ -297,3 +298,6 @@ fn reordered_manifest_requires_numbering_then_drives_existing_toc_traversal() {
     let labels = entries.as_array().unwrap().iter().map(|e| (e["text"].as_str().unwrap(), e["page"].as_str().unwrap())).collect::<Vec<_>>();
     assert_eq!(labels, [("Local", "1"), ("Alpha", "3"), ("Zulu", "5"), ("Zulu child", "5")]);
 }
+
+#[path = "book_fixture_tests.rs"]
+pub(crate) mod fixtures;

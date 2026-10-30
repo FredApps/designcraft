@@ -12,6 +12,7 @@
 
 DesignCraft aims at full Adobe InDesign parity — and to be better: faster, open (documented JSON format + IDML), scriptable by agents (MCP), and available on the web.
 
+- **2026-10-30** · Book-wide TOC refresh stabilizes numbering and layout in at most four snapshot passes. Active Generate/Update preserves unsaved edits and local Undo/Redo, with freshness confirmed on Save; the Book-panel action supports closed documents. Book PDF export rejects stale TOCs and shows destination/member errors visibly.
 - **2026-10-30** · Book panel drag-and-drop ordering through atomic `book.move`; preserves style-source identity and requires numbering refresh before Book TOC updates.
 - **2026-10-30** · Book-wide TOC: persisted Current Document / Entire Book scope, Book-ordered heading collection, remote source styles and IDML scope mapping. Stable numbering and fixed TOC capacity are required; layout-changing generation is rejected. Convergence and freshness tracking remain open.
 - **2026-10-25** · The application bar uses craft-window's shared title-bar code. A drag that

@@ -17,8 +17,16 @@ score below).
 
 Native format 5 preserves Entire Book TOC scope so older readers cannot silently regenerate it as a document-local TOC. Current Document retains its prior minimum format requirement. IDML TOC styles map the scope through `IncludeBookDocuments` in both directions; collection still requires an open Book and stable numbering.
 Books retain their existing JSON manifest structure. The optional `numberingNeedsUpdate` boolean
-defaults to false when absent; a reorder sets it until Update Numbering succeeds. Old documents
-and Books load without migration.
+defaults to false when absent; a reorder sets it until Update Numbering or a saved stable Book TOC
+refresh succeeds. Old documents
+and Books load without migration. A successful Book TOC refresh also saves a bounded,
+versioned semantic `tocState` checkpoint in the `.dcbook` manifest. Freshness is recomputed from
+current sources and a scratch formatting/layout pass; the checkpoint records provenance so even
+identity/configuration changes producing identical text are detected. Missing/unknown checkpoints
+require one explicit Book refresh before exporting a Book containing an Entire Book TOC. No native
+`.designcraft` version bump or Current Document TOC migration is required. Active Generate/Update
+retains confirmation in the session until normal Save validates the saved model and current sources;
+unsaved adoption never publishes disk freshness.
 
 ## Documents and interchange
 

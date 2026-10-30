@@ -20,12 +20,16 @@ pub fn specs() -> Vec<CommandSpec> {
             "Table of Contents…",
             ["Layout"],
             None,
-            "{entries: [{style, level?: 1 (1-9), entryStyle?: paragraph style of its entries (default \"TOC Level n\"), pageNumber?: \"after\"|\"before\"|\"none\", separator?: text between entry and number (default a tab), pageNumberStyle?: character style of the page number, separatorStyle?: character style of the separator, sort?: bool (Sort Entries in Alphabetical Order: among their siblings, each with the entries under it)}] | styles: [names] (levels 1, 2, …), title?: \"Contents\", titleStyle?: paragraph style of the title (default \"TOC Title\"), pageNumbers?: true, scope?: \"currentDocument\"|\"entireBook\" (Book order, stable numbering only), replace?: true (regenerate the existing table of contents in place; false makes a new frame), page?: 1-based page for a new frame (its margins), rect?: [x0,y0,x1,y1] (spread coords)} → {story, entries}",
+            "{entries: [{style, level?: 1 (1-9), entryStyle?: paragraph style of its entries (default \"TOC Level n\"), pageNumber?: \"after\"|\"before\"|\"none\", separator?: text between entry and number (default a tab), pageNumberStyle?: character style of the page number, separatorStyle?: character style of the separator, sort?: bool (Sort Entries in Alphabetical Order: among their siblings, each with the entries under it)}] | styles: [names] (levels 1, 2, …), title?: \"Contents\", titleStyle?: paragraph style of the title (default \"TOC Title\"), pageNumbers?: true, scope?: \"currentDocument\"|\"entireBook\" (Book order; bounded stabilization for Generate/Update), replace?: true (regenerate the existing table of contents in place; false makes a new frame), page?: 1-based page for a new frame (its margins), rect?: [x0,y0,x1,y1] (spread coords)} → {story, entries}",
             has_doc,
             generate
         ),
         cmd!("toc.update", "Update Table of Contents", ["Layout"], None, "{} — regenerate the existing table of contents", has_toc, |s, _| {
             let toc = s.doc()?.doc.toc.clone().ok_or_else(|| bad("toc.update", "no table of contents"))?;
+            #[cfg(not(target_arch = "wasm32"))]
+            if toc.scope == TocScope::EntireBook {
+                return super::book::active_toc(s, None);
+            }
             let found = book_found(s, toc.scope, &toc.entries)?;
             s.edit(|d, _| {
                 let n = fill(d, &toc, None, found)?;
@@ -70,39 +74,55 @@ fn book_found(s: &Session, scope: TocScope, entries: &[TocEntry]) -> Result<Opti
     if scope == TocScope::CurrentDocument {
         return Ok(None);
     }
-    if entries.iter().any(|e| e.sort) {
-        return Err(bad("toc", "Entire Book uses Book order; alphabetical sorting is available only for Current Document"));
-    }
     if s.book.as_ref().is_some_and(|b| b.numbering_needs_update) {
         return Err(bad("toc", "Book order changed; save and close chapters, run Update Numbering, then reopen the TOC document and update the TOC"));
     }
-    let mut found = Vec::new();
-    let mut styles = std::collections::HashSet::new();
-    let mut next = 1u32;
-    super::book::visit_toc(s, |path, d| {
-        if d.page_number(0) != next {
+    let mut collector = BookCollector::new(entries)?;
+    super::book::visit_toc(s, |path, d| collector.visit(path, d))?;
+    Ok(Some(collector.finish()?))
+}
+
+/// One collector for live traversal and isolated, already-numbered Book snapshots.
+pub(super) struct BookCollector<'a> {
+    entries: &'a [TocEntry],
+    found: Vec<Found>,
+    styles: std::collections::HashSet<String>,
+    next: u32,
+}
+impl<'a> BookCollector<'a> {
+    pub(super) fn new(entries: &'a [TocEntry]) -> Result<Self> {
+        if entries.iter().any(|e| e.sort) {
+            return Err(bad("toc", "Entire Book uses Book order; alphabetical sorting is available only for Current Document"));
+        }
+        Ok(Self { entries, found: Vec::new(), styles: Default::default(), next: 1 })
+    }
+    pub(super) fn visit(&mut self, path: &str, d: &Document) -> Result<()> {
+        if d.page_number(0) != self.next {
             return Err(bad(
                 "toc",
                 format!("Book numbering is not current at {path}; save and close chapters, run Update Numbering, then reopen the TOC document"),
             ));
         }
-        next = next
+        self.next = self
+            .next
             .checked_add(u32::try_from(d.page_count()).map_err(|_| bad("toc", "too many Book pages"))?)
             .ok_or_else(|| bad("toc", "too many Book pages"))?;
-        styles.extend(d.styles.paragraph.iter().map(|p| p.name.clone()));
-        let mut chapter = collect(d, entries, d.toc.as_ref().map(|t| t.story));
+        self.styles.extend(d.styles.paragraph.iter().map(|p| p.name.clone()));
+        let mut chapter = collect(d, self.entries, d.toc.as_ref().map(|t| t.story));
         for f in &mut chapter {
             f.document = Some(path.to_string());
         }
-        found.extend(chapter);
+        self.found.extend(chapter);
         Ok(())
-    })?;
-    for entry in entries {
-        if !styles.contains(&entry.style) {
-            return Err(bad("toc", format!("no paragraph style `{}` in the Book", entry.style)));
-        }
     }
-    Ok(Some(found))
+    pub(super) fn finish(self) -> Result<Vec<Found>> {
+        for entry in self.entries {
+            if !self.styles.contains(&entry.style) {
+                return Err(bad("toc", format!("no paragraph style `{}` in the Book", entry.style)));
+            }
+        }
+        Ok(self.found)
+    }
 }
 
 /// Called after the command's normal reflow/caption/autosize passes, before recording undo.
@@ -236,7 +256,7 @@ fn sort_entries(found: Vec<Found>, entries: &[TocEntry]) -> Vec<Found> {
     blocks.into_iter().flatten().collect()
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Serialize)]
 pub struct Found {
     document: Option<String>,
     source: (StoryId, usize),
@@ -328,7 +348,7 @@ fn ensure_styles(d: &mut Document, levels: u8, width: f64) {
 }
 
 /// Rewrite the TOC story; returns the number of entries.
-fn fill(d: &mut Document, toc: &Toc, width: Option<f64>, found: Option<Vec<Found>>) -> Result<usize> {
+pub(super) fn fill(d: &mut Document, toc: &Toc, width: Option<f64>, found: Option<Vec<Found>>) -> Result<usize> {
     let found = found.unwrap_or_else(|| collect(d, &toc.entries, Some(toc.story)));
     let levels = toc.entries.iter().map(|e| e.level).max().unwrap_or(1);
     let width = width.unwrap_or_else(|| {
@@ -396,7 +416,29 @@ fn fill(d: &mut Document, toc: &Toc, width: Option<f64>, found: Option<Vec<Found
     Ok(found.len())
 }
 
+pub(crate) fn stabilizes(s: &Session, id: &str, p: &Value) -> bool {
+    cfg!(not(target_arch = "wasm32"))
+        && match id {
+            "toc.generate" => scope_param(p).is_ok_and(|scope| scope == TocScope::EntireBook),
+            "toc.update" => s.active().is_some_and(|st| st.doc.toc.as_ref().is_some_and(|t| t.scope == TocScope::EntireBook)),
+            _ => false,
+        }
+}
+
 fn generate(s: &mut Session, p: &Value) -> Result<Value> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if scope_param(p)? == TocScope::EntireBook {
+        return super::book::active_toc(s, Some(p));
+    }
+    generate_impl(s, p, false)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn configure_book(s: &mut Session, p: &Value) -> Result<Value> {
+    generate_impl(s, p, true)
+}
+
+fn generate_impl(s: &mut Session, p: &Value, configure_only: bool) -> Result<Value> {
     let entries = entries_param(p)?;
     if entries.is_empty() {
         return Err(bad("toc.generate", "no entries"));
@@ -419,7 +461,7 @@ fn generate(s: &mut Session, p: &Value) -> Result<Value> {
     let page = p.get("page").and_then(Value::as_u64).map_or(Some(0), |n| usize::try_from(n.max(1) - 1).ok());
     let page = page.ok_or_else(|| bad("toc.generate", "no such page"))?;
     let scope = scope_param(p)?;
-    let found = book_found(s, scope, &entries)?;
+    let found = if configure_only { None } else { book_found(s, scope, &entries)? };
     s.edit(|d, sel| {
         if scope == TocScope::CurrentDocument {
             for e in &entries {
@@ -427,7 +469,15 @@ fn generate(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
         // Replace: regenerate the existing TOC story in place; otherwise make a frame.
-        let existing = d.toc.as_ref().map(|t| t.story).filter(|sid| replace && d.story(*sid).is_some());
+        let existing = d.toc.as_ref().map(|t| t.story).filter(|sid| replace && d.story(*sid).is_some()).or_else(|| {
+            if configure_only && (replace || d.toc.is_none()) && rect.is_none() {
+                d.settings.primary_story.filter(|sid| {
+                    d.story(*sid).is_some_and(|st| st.text.is_empty() && st.frames.first().is_some_and(|id| d.page_of_item(*id) == Some(page)))
+                })
+            } else {
+                None
+            }
+        });
         let (story, width) = match existing {
             Some(sid) => (sid, None),
             None => {
@@ -441,7 +491,7 @@ fn generate(s: &mut Session, p: &Value) -> Result<Value> {
             }
         };
         let toc = Toc { scope, story, title: title.clone(), entries: entries.clone(), page_numbers, title_style: title_style.clone() };
-        let n = fill(d, &toc, width, found)?;
+        let n = if configure_only { 0 } else { fill(d, &toc, width, found)? };
         d.toc = Some(toc);
         Ok(json!({"story": story.0, "entries": n}))
     })
@@ -745,4 +795,4 @@ mod tests {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "toc/book_tests.rs"]
-mod book_tests;
+pub(crate) mod book_tests;

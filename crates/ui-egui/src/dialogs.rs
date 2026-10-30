@@ -6938,7 +6938,7 @@ fn toc_dialog(app: &mut DesignApp, ui: &mut egui::Ui, d: &mut Dialog) {
     }
     let entire_book = scope == "entireBook";
     if entire_book {
-        crate::rtl::label(ui, tr("Entire Book requires stable numbering and fixed TOC space. Update after changes."));
+        crate::rtl::label(ui, tr("Entire Book updates numbering and TOC layout automatically. Close other Book documents before updating."));
     }
     let styles: Vec<String> = d.fields.get("styles").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
     let output_styles: Vec<String> =
