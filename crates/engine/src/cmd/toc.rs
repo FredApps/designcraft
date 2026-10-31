@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use super::{CommandSpec, bad, cmd, has_doc, str_param};
 use crate::{Result, Session};
 
+/// Register TOC generation and refresh commands.
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
@@ -20,7 +21,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Table of Contents…",
             ["Layout"],
             None,
-            "{entries: [{style, level?: 1 (1-9), entryStyle?: paragraph style of its entries (default \"TOC Level n\"), pageNumber?: \"after\"|\"before\"|\"none\", separator?: text between entry and number (default a tab), pageNumberStyle?: character style of the page number, separatorStyle?: character style of the separator, sort?: bool (Sort Entries in Alphabetical Order: among their siblings, each with the entries under it)}] | styles: [names] (levels 1, 2, …), title?: \"Contents\", titleStyle?: paragraph style of the title (default \"TOC Title\"), pageNumbers?: true, scope?: \"currentDocument\"|\"entireBook\" (Book order; bounded stabilization for Generate/Update), replace?: true (regenerate the existing table of contents in place; false makes a new frame), page?: 1-based page for a new frame (its margins), rect?: [x0,y0,x1,y1] (spread coords)} → {story, entries}",
+            "{entries: [{style, level?: 1 (1-9), entryStyle?: paragraph style of its entries (default \"TOC Level n\"), pageNumber?: \"after\"|\"before\"|\"none\", separator?: text between entry and number (default a tab), pageNumberStyle?: character style of the page number, separatorStyle?: character style of the separator, sort?: bool (Sort Entries in Alphabetical Order: among their siblings, each with the entries under it)}] | styles: [names] (levels 1, 2, …), title?: \"Contents\", titleStyle?: paragraph style of the title (default \"TOC Title\"), pageNumbers?: true, scope?: \"currentDocument\"|\"entireBook\" (Book order; bounded stabilization for Generate/Update), createBookmarks?: bool (Current Document PDF bookmarks; Entire Book does not support cross-document destinations), replace?: true (regenerate the existing table of contents in place; false makes a new frame), page?: 1-based page for a new frame (its margins), rect?: [x0,y0,x1,y1] (spread coords)} → {story, entries}",
             has_doc,
             generate
         ),
@@ -349,6 +350,12 @@ fn ensure_styles(d: &mut Document, levels: u8, width: f64) {
 
 /// Rewrite the TOC story; returns the number of entries.
 pub(super) fn fill(d: &mut Document, toc: &Toc, width: Option<f64>, found: Option<Vec<Found>>) -> Result<usize> {
+    if toc.scope == TocScope::EntireBook && toc.create_bookmarks {
+        return Err(bad(
+            "toc.update",
+            "PDF bookmarks are supported only for Current Document TOCs; Entire Book destinations span multiple documents",
+        ));
+    }
     let found = found.unwrap_or_else(|| collect(d, &toc.entries, Some(toc.story)));
     let levels = toc.entries.iter().map(|e| e.level).max().unwrap_or(1);
     let width = width.unwrap_or_else(|| {
@@ -413,6 +420,11 @@ pub(super) fn fill(d: &mut Document, toc: &Toc, width: Option<f64>, found: Optio
             st.format_paras(r.start..r.start, |f| *f = ParaFormat { style: name.clone(), ..Default::default() });
         }
     }
+    let insertion = d.bookmarks.iter().position(|b| b.generated_by_toc).unwrap_or(d.bookmarks.len());
+    d.bookmarks.retain(|b| !b.generated_by_toc);
+    if toc.create_bookmarks {
+        d.bookmarks.splice(insertion..insertion, bookmarks(&found));
+    }
     Ok(found.len())
 }
 
@@ -425,6 +437,22 @@ pub(crate) fn stabilizes(s: &Session, id: &str, p: &Value) -> bool {
         }
 }
 
+/// Levels are validated to 1–9. Recursion follows strictly increasing levels, including when
+/// a document skips a level; each destination is the physical page, not its section label.
+fn bookmarks(found: &[Found]) -> Vec<designcraft_doc::Bookmark> {
+    /// Collect descendants until the next sibling or ancestor entry.
+    fn children(iter: &mut std::iter::Peekable<std::slice::Iter<'_, Found>>, parent: u8) -> Vec<designcraft_doc::Bookmark> {
+        let mut out = Vec::new();
+        while iter.peek().is_some_and(|f| f.level > parent) {
+            let Some(f) = iter.next() else { break };
+            out.push(designcraft_doc::Bookmark { name: f.text.clone(), page: f.key.0, children: children(iter, f.level), generated_by_toc: true });
+        }
+        out
+    }
+    children(&mut found.iter().peekable(), 0)
+}
+
+/// Validate the TOC settings and generate its frame, text, and outline in one edit.
 fn generate(s: &mut Session, p: &Value) -> Result<Value> {
     #[cfg(not(target_arch = "wasm32"))]
     if scope_param(p)? == TocScope::EntireBook {
@@ -453,6 +481,16 @@ fn generate_impl(s: &mut Session, p: &Value, configure_only: bool) -> Result<Val
         return Err(bad("toc.generate", format!("style names are at most {MAX_NAME} characters")));
     }
     let page_numbers = p.get("pageNumbers").and_then(Value::as_bool).unwrap_or(true);
+    let create_bookmarks = match p.get("createBookmarks") {
+        Some(v) => v.as_bool().ok_or_else(|| bad("toc.generate", "createBookmarks must be a boolean"))?,
+        None => s.doc()?.doc.toc.as_ref().is_some_and(|t| t.create_bookmarks),
+    };
+    if scope_param(p)? == TocScope::EntireBook && create_bookmarks {
+        return Err(bad(
+            "toc.generate",
+            "PDF bookmarks are supported only for Current Document TOCs; Entire Book destinations span multiple documents",
+        ));
+    }
     let replace = p.get("replace").and_then(Value::as_bool).unwrap_or(true);
     let rect = super::rect_param(p, "rect");
     if rect.is_some_and(|r| ![r.x0, r.y0, r.x1, r.y1].iter().all(|v| v.is_finite()) || r.width() <= 0.0 || r.height() <= 0.0) {
@@ -490,7 +528,8 @@ fn generate_impl(s: &mut Session, p: &Value, configure_only: bool) -> Result<Val
                 (sid, w)
             }
         };
-        let toc = Toc { scope, story, title: title.clone(), entries: entries.clone(), page_numbers, title_style: title_style.clone() };
+        let toc =
+            Toc { scope, story, title: title.clone(), entries: entries.clone(), page_numbers, title_style: title_style.clone(), create_bookmarks };
         let n = if configure_only { 0 } else { fill(d, &toc, width, found)? };
         d.toc = Some(toc);
         Ok(json!({"story": story.0, "entries": n}))
@@ -766,6 +805,46 @@ mod tests {
         assert_eq!((e.page_number_style.as_deref(), e.separator_style), (Some("Folio"), None));
         s.execute("toc.update", &json!({})).unwrap();
         assert!(toc_runs(&s).iter().any(|(t, st)| t == "1" && st == "Folio"), "{:?}", toc_runs(&s));
+    }
+
+    /// Refresh preserves manual outline positions, nested destinations, storage, and undo.
+    #[test]
+    fn toc_bookmarks_refresh_nested_page_destinations_and_preserve_manual_bookmarks() {
+        let (mut s, page) = doc_with(&[("First", "Head"), ("Child", "Sub"), ("Last", "Head")]);
+        s.execute("layout.section", &json!({"page": 1, "style": "lowerRoman", "startNumber": 4})).unwrap();
+        s.execute("bookmark.add", &json!({"name": "Manual", "page": page})).unwrap();
+        let p = json!({"page": page, "createBookmarks": true, "entries": [
+            {"style": "Head", "level": 1}, {"style": "Sub", "level": 3}
+        ]});
+        s.execute("toc.generate", &p).unwrap();
+        let d = &s.doc().unwrap().doc;
+        assert_eq!(d.bookmarks.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(), ["Manual", "First", "Last"]);
+        assert_eq!(d.bookmarks[1].page, 0, "physical page, although its label is iv");
+        assert_eq!(d.bookmarks[1].children[0].name, "Child");
+        assert!(d.bookmarks[1].children[0].generated_by_toc);
+        let sid = d.stories.iter().find(|(_, st)| st.text.starts_with("First")).map(|(sid, _)| *sid).unwrap();
+        s.execute("bookmark.add", &json!({"name": "Manual after", "page": page})).unwrap();
+        s.execute("text.select", &json!({"story": sid.0, "anchor": 0, "focus": 5})).unwrap();
+        s.execute("text.insert", &json!({"text": "Changed"})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.bookmarks[1].name, "First", "refresh is explicit");
+        s.execute("toc.update", &json!({})).unwrap();
+        let refreshed = s.doc().unwrap().doc.bookmarks.clone();
+        assert_eq!(refreshed.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(), ["Manual", "Changed", "Last", "Manual after"]);
+        s.execute("toc.update", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.bookmarks, refreshed, "updates do not duplicate bookmarks");
+        // Native storage retains both the option and ownership; old bookmarks default to manual.
+        let stored = serde_json::to_value(&s.doc().unwrap().doc).unwrap();
+        let back: Document = serde_json::from_value(stored).unwrap();
+        assert!(back.toc.as_ref().unwrap().create_bookmarks);
+        assert_eq!(back.bookmarks, refreshed);
+        let old: designcraft_doc::Bookmark = serde_json::from_value(json!({"name": "Old", "page": 0})).unwrap();
+        assert!(!old.generated_by_toc);
+        let mut disabled = p;
+        disabled["createBookmarks"] = json!(false);
+        s.execute("toc.generate", &disabled).unwrap();
+        assert_eq!(s.doc().unwrap().doc.bookmarks.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(), ["Manual", "Manual after"]);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.bookmarks, refreshed);
     }
 
     #[test]

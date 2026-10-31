@@ -351,6 +351,7 @@ impl<'r> Importer<'r> {
         } else {
             designcraft_doc::TocScope::CurrentDocument
         };
-        Some(designcraft_doc::Toc { scope, story, title, entries, page_numbers: true, title_style })
+        let create_bookmarks = ts.get("CreateBookmarks").or_else(|| ts.get("CreatePdfBookmarks")) == Some("true");
+        Some(designcraft_doc::Toc { scope, story, title, entries, page_numbers: true, title_style, create_bookmarks })
     }
 }

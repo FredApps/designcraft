@@ -16,6 +16,9 @@ Weight: what share of an InDesign professional's file traffic the format carries
 score below).
 
 Native format 5 preserves Entire Book TOC scope so older readers cannot silently regenerate it as a document-local TOC. Current Document retains its prior minimum format requirement. IDML TOC styles map the scope through `IncludeBookDocuments` in both directions; collection still requires an open Book and stable numbering.
+TOC PDF bookmark generation remains available for Current Document scope. Entire Book generation
+rejects that option because chapter-local destinations cannot be represented as bookmarks in the
+TOC document; IDML retains both the scope and bookmark option without silently changing them.
 Books retain their existing JSON manifest structure. The optional `numberingNeedsUpdate` boolean
 defaults to false when absent; a reorder sets it until Update Numbering or a saved stable Book TOC
 refresh succeeds. Old documents

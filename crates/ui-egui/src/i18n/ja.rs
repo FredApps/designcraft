@@ -3,6 +3,7 @@
 //! Portuguese tables has a row here; the menu titles and panel names that were already Japanese in the
 //! shared table are carried over unchanged.
 pub(super) const TABLE: &[(&str, &str)] = &[
+    ("Fewer Options", "オプションを減らす"),
     ("File", "ファイル"),
     ("Edit", "編集"),
     ("Layout", "レイアウト"),
@@ -30,6 +31,14 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Cut", "カット"),
     ("Copy", "コピー"),
     ("Paste", "ペースト"),
+    ("Stroke Type", "線の種類"),
+    ("Corner Shape", "角のシェイプ"),
+    ("Corner Size and Shape:", "角のサイズとシェイプ:"),
+    ("Join", "連結"),
+    ("Convert Point", "ポイントを切り換え"),
+    ("New Section", "新規セクション"),
+    ("Clear Frame Fitting Options", "フレーム調整オプションを消去"),
+    ("Cannot be edited", "編集不可"),
     ("Restart Numbering", "番号の振り直し"),
     ("Continue Numbering", "番号の継続"),
     ("Keep Options…", "段落分離禁止オプション…"),
@@ -408,6 +417,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Choose Image…", "画像を選択…"),
     ("Class:", "クラス:"),
     ("Color Picker", "カラーピッカー"),
+    ("Color spectrum", "カラースペクトル"),
     ("Color Settings", "カラー設定"),
     ("Color:", "カラー:"),
     ("Columns", "列数"),
@@ -1872,6 +1882,7 @@ pub(super) const TABLE: &[(&str, &str)] = &[
     ("Object/Fitting", "オブジェクト/オブジェクトサイズの調整"),
     ("Object/Pathfinder", "オブジェクト/パスファインダー"),
     ("Object/Paths", "オブジェクト/パス"),
+    ("Object/Convert Point", "オブジェクト/ポイントを切り換え"),
     ("Object/Select", "オブジェクト/選択"),
     ("Object/Transform", "オブジェクト/変形"),
     ("Object/Transform Again", "オブジェクト/変形を再適用"),

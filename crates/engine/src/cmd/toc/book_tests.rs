@@ -301,3 +301,20 @@ fn reordered_manifest_requires_numbering_then_drives_existing_toc_traversal() {
 
 #[path = "book_fixture_tests.rs"]
 pub(crate) mod fixtures;
+
+#[test]
+fn entire_book_rejects_document_local_bookmark_destinations() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({})).unwrap();
+    let before = serde_json::to_value(&s.doc().unwrap().doc).unwrap();
+    // Validate on the scratch configuration path used by active Book generation.
+    let error = configure_book(&mut s, &json!({"scope":"entireBook","styles":["Head"],"createBookmarks":true})).unwrap_err();
+    assert!(error.to_string().contains("destinations span multiple documents"), "{error}");
+    assert_eq!(serde_json::to_value(&s.doc().unwrap().doc).unwrap(), before);
+    let mut d = fixtures::toc_document(300.0, 500.0, true, " ");
+    let mut toc = d.toc.clone().unwrap();
+    toc.create_bookmarks = true;
+    let before = serde_json::to_value(&d).unwrap();
+    assert!(fill(&mut d, &toc, None, Some(vec![])).is_err());
+    assert_eq!(serde_json::to_value(&d).unwrap(), before);
+}

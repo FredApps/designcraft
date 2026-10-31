@@ -18,7 +18,15 @@ pub(crate) fn toc_document(width: f64, height: f64, primary: bool, separator: &s
     let story = d.settings.primary_story.unwrap_or(StoryId(0));
     let mut entry = TocEntry::new("Head", 1);
     entry.separator = Some(separator.into());
-    d.toc = Some(Toc { scope: TocScope::EntireBook, story, title: String::new(), entries: vec![entry], page_numbers: true, title_style: None });
+    d.toc = Some(Toc {
+        scope: TocScope::EntireBook,
+        story,
+        title: String::new(),
+        entries: vec![entry],
+        page_numbers: true,
+        title_style: None,
+        create_bookmarks: false,
+    });
     if !primary {
         d.settings.primary_story = None;
     }

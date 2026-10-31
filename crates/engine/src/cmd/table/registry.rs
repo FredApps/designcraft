@@ -1,7 +1,7 @@
 use super::cell::{get_cell_stroke, set_cell};
 use super::content::{drop_cells, place_graphic, sort_rows};
 use super::options::{get, options};
-use super::selection::{move_rc, select, step_cell};
+use super::selection::{move_rc, select, step_cell, toggle_selection};
 use super::sizing::{distribute_cols, distribute_rows, resize_border, set_col_width, set_row_height};
 use super::structure::{
     can_convert_rows, convert_from_text, convert_rows, convert_to_text, delete_cols, delete_rows, delete_table, insert, insert_col, insert_row,
@@ -397,6 +397,15 @@ fn table_specs() -> Vec<CommandSpec> {
         }),
         cmd!(noundo "table.nextCell", "Next Cell", [], None, "{}", in_cell, |s, _| step_cell(s, true)),
         cmd!(noundo "table.prevCell", "Previous Cell", [], None, "{}", in_cell, |s, _| step_cell(s, false)),
+        cmd!(
+            noundo "table.toggleSelection",
+            "Toggle Text and Cell Selection",
+            [],
+            None,
+            "{} — Esc in a table, as InDesign: the insertion point or text in a cell selects that cell; selected cells select the text of the first one",
+            in_cell,
+            |s, _| toggle_selection(s)
+        ),
         cmd!(query "table.get", "Get Table", [], None, "{story?, table?, rows?: [a,b] | row?, cols?: [a,b] | col?} → rows, columns, cells (text, spans, fill), options", in_table_or_ids, get),
     ]
 }
