@@ -486,6 +486,63 @@ fn place_gun_click_drag_and_into_frame() {
     assert_eq!(graphic_xf(&s), placed);
 }
 
+/// A place-cursor drag draws the frame at the graphic's proportions from where it started, as
+/// InDesign does, shows its scale, and places exactly that frame, in any direction.
+#[test]
+fn place_gun_drag_previews_and_places_a_proportional_frame() {
+    use designcraft_tools::{Cursor, Mods, Overlay, PointerEvent, PointerKind};
+    let mut s = session();
+    let png = designcraft_render::Rendered { width: 40, height: 20, pixels: vec![200; 40 * 20 * 4] }.to_png();
+    s.execute("place.load", &json!({"base64": cmd::base64_encode(&png), "name": "a.png"})).unwrap();
+    let v = ViewInfo::at_zoom(1.0);
+    let p = designcraft_geom::Point::new;
+    assert_eq!(s.cursor(p(300.0, 300.0), Mods::default(), v), Cursor::LoadedGraphic);
+    // Up and to the left: 80 × 200 holds the 40 × 20 graphic at 200 %, 80 × 40, hanging from the press.
+    s.pointer(&PointerEvent::new(PointerKind::Down, 300.0, 300.0), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Drag, 220.0, 100.0), v).unwrap();
+    assert_eq!(s.cursor(p(220.0, 100.0), Mods::default(), v), Cursor::Crosshair, "the crosshair while drawing");
+    let o = s.overlays(v);
+    assert!(o.iter().any(|o| matches!(o, Overlay::Marquee(r) if *r == designcraft_geom::Rect::new(220.0, 260.0, 300.0, 300.0))), "{o:?}");
+    assert!(
+        o.iter().any(|o| matches!(o, Overlay::Measure { text, .. } if text == "X: 200.00%
+Y: 200.00%")),
+        "{o:?}"
+    );
+    s.pointer(&PointerEvent::new(PointerKind::Up, 220.0, 100.0), v).unwrap();
+    let it = s.doc().unwrap().doc.spreads[0].items.last().unwrap().clone();
+    assert_eq!(it.bounds(), designcraft_geom::Rect::new(220.0, 260.0, 300.0, 300.0), "the frame previewed");
+    // 80 × 1 is past the drag tolerance, but its 2 × 1 proportional frame is too small for
+    // `place.drop`, which places at natural size: the preview shows that frame and 100 %.
+    s.execute("place.load", &json!({"base64": cmd::base64_encode(&png), "name": "a.png"})).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Down, 100.0, 400.0), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Drag, 180.0, 401.0), v).unwrap();
+    let natural = designcraft_geom::Rect::new(100.0, 400.0, 140.0, 420.0);
+    let o = s.overlays(v);
+    assert!(o.iter().any(|o| matches!(o, Overlay::Marquee(r) if *r == natural)), "{o:?}");
+    assert!(
+        o.iter().any(|o| matches!(o, Overlay::Measure { text, .. } if text == "X: 100.00%
+Y: 100.00%")),
+        "{o:?}"
+    );
+    s.pointer(&PointerEvent::new(PointerKind::Up, 180.0, 401.0), v).unwrap();
+    let it = s.doc().unwrap().doc.spreads[0].items.last().unwrap().clone();
+    assert_eq!(it.bounds(), natural, "the frame previewed");
+    // A drag under the threshold is a click: no frame drawn, the graphic at actual size where
+    // the press was.
+    s.execute("place.load", &json!({"base64": cmd::base64_encode(&png), "name": "a.png"})).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Down, 100.0, 500.0), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Drag, 102.5, 501.25), v).unwrap();
+    assert!(!s.overlays(v).iter().any(|o| matches!(o, Overlay::Marquee(_))), "no frame yet");
+    assert_eq!(s.cursor(p(102.5, 501.25), Mods::default(), v), Cursor::LoadedGraphic, "the thumbnail stays");
+    s.pointer(&PointerEvent::new(PointerKind::Up, 102.5, 501.25), v).unwrap();
+    let it = s.doc().unwrap().doc.spreads[0].items.last().unwrap().clone();
+    assert_eq!(it.bounds(), designcraft_geom::Rect::new(100.0, 500.0, 140.0, 520.0), "actual size at the press");
+    // With no graphic loaded there's no thumbnail to show: the crosshair, before any press too.
+    s.loaded = None;
+    s.set_tool("placeGun");
+    assert_eq!(s.cursor(p(300.0, 300.0), Mods::default(), v), Cursor::Crosshair);
+}
+
 #[test]
 fn preflight_reports_overset_and_missing_fonts() {
     let mut s = session();
@@ -1701,6 +1758,111 @@ fn paragraph_style_references_must_name_styles() {
     }
     assert!(std::sync::Arc::ptr_eq(&before, &s.doc().unwrap().doc), "nothing changed");
     s.execute("style.paragraph.edit", &json!({"name": "Body", "basedOn": null, "nextStyle": "Self"})).unwrap();
+}
+
+/// The course's chapter 43: with Direct Selection, a circle's selected anchor shows its handles
+/// and they drag, reshaping the curve; the handles of the anchors away from it neither show nor
+/// catch a press, as in InDesign.
+#[test]
+fn direct_selection_drags_only_the_handles_around_the_selected_anchor() {
+    use designcraft_tools::{PointerEvent, PointerKind};
+    let mut s = session();
+    let v = ViewInfo::at_zoom(1.0);
+    let id = s.execute("frame.create", &json!({"rect": [100, 300, 300, 500], "shape": "ellipse"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("selection.set", &json!({"ids": [id]})).unwrap();
+    s.set_tool("directSelection");
+    // Each anchor and its two handles, in the spread.
+    let anchors = |s: &Session| {
+        let st = s.doc().unwrap();
+        let it = st.doc.item(designcraft_doc::ItemId(id)).unwrap();
+        it.path.subpaths[0].anchors.iter().map(|a| (it.xf * a.p, it.xf * a.h_in, it.xf * a.h_out)).collect::<Vec<_>>()
+    };
+    let before = anchors(&s);
+    let lowest = |f: &dyn Fn(f64) -> f64| (0..before.len()).min_by(|a, b| f(before[*a].0.y).total_cmp(&f(before[*b].0.y))).unwrap();
+    let (bottom, top) = (lowest(&|y| -y), lowest(&|y| y));
+    let press = |s: &mut Session, from: designcraft_geom::Point, to: designcraft_geom::Point| {
+        s.pointer(&PointerEvent::new(PointerKind::Down, from.x, from.y), v).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Drag, (from.x + to.x) / 2.0, (from.y + to.y) / 2.0), v).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Drag, to.x, to.y), v).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Up, to.x, to.y), v).unwrap();
+    };
+    // Select the bottom anchor.
+    let b = before[bottom].0;
+    press(&mut s, b, b);
+    assert_eq!(s.doc().unwrap().selection.anchors, [(designcraft_doc::ItemId(id), 0, bottom)]);
+    // Its handle drags: the handle moves.
+    let h = before[bottom].2;
+    press(&mut s, h, h + designcraft_geom::Vec2::new(30.0, 0.0));
+    let after = anchors(&s);
+    assert!((after[bottom].2 - before[bottom].2).hypot() > 20.0, "the bottom handle moved: {:?} → {:?}", before[bottom], after[bottom]);
+    // The top anchor's handle isn't shown, so a press on it doesn't take it.
+    let t = before[top].2;
+    press(&mut s, t, t + designcraft_geom::Vec2::new(0.0, -30.0));
+    let after2 = anchors(&s);
+    assert!((after2[top].2 - before[top].2).hypot() < 1e-6, "the top handle stays: {:?} → {:?}", before[top], after2[top]);
+}
+
+/// Direct Selection: a marquee over the top edges of two frames selects their top points, and a
+/// drag on one of them slants both frames in one undo step (InDesign's way to make a row of
+/// parallelograms).
+#[test]
+fn direct_selection_moves_the_points_of_several_frames_at_once() {
+    use designcraft_tools::{Mods, PointerEvent, PointerKind};
+    let mut s = session();
+    let v = ViewInfo::at_zoom(1.0);
+    let a = s.execute("frame.create", &json!({"rect": [100, 300, 200, 400]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("frame.create", &json!({"rect": [200, 300, 300, 400]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("selection.set", &json!({"ids": []})).unwrap();
+    s.set_tool("directSelection");
+    s.pointer(&PointerEvent::new(PointerKind::Down, 80.0, 280.0), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Drag, 320.0, 320.0), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Up, 320.0, 320.0), v).unwrap();
+    let sel = s.doc().unwrap().selection.clone();
+    assert_eq!(sel.anchors.len(), 4, "{:?}", sel.anchors);
+    assert!(sel.items.contains(&designcraft_doc::ItemId(a)) && sel.items.contains(&designcraft_doc::ItemId(b)));
+    let shift = Mods { shift: true, ..Default::default() };
+    s.pointer(&PointerEvent::new(PointerKind::Down, 100.0, 300.0), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Drag, 136.0, 302.0).with_mods(shift), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Up, 136.0, 302.0).with_mods(shift), v).unwrap();
+    let corners = |s: &Session, id: u64| -> Vec<(f64, f64)> {
+        let st = s.doc().unwrap();
+        let it = st.doc.item(designcraft_doc::ItemId(id)).unwrap();
+        it.path.subpaths[0].anchors.iter().map(|an| ((it.xf * an.p).x.round(), (it.xf * an.p).y.round())).collect()
+    };
+    // Both frames: top points 36 pt to the right, bottom points where they were.
+    assert_eq!(corners(&s, a), vec![(136.0, 300.0), (236.0, 300.0), (200.0, 400.0), (100.0, 400.0)]);
+    assert_eq!(corners(&s, b), vec![(236.0, 300.0), (336.0, 300.0), (300.0, 400.0), (200.0, 400.0)]);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(corners(&s, a), vec![(100.0, 300.0), (200.0, 300.0), (200.0, 400.0), (100.0, 400.0)]);
+    assert_eq!(corners(&s, b), vec![(200.0, 300.0), (300.0, 300.0), (300.0, 400.0), (200.0, 400.0)]);
+}
+
+#[test]
+fn selected_points_follow_their_path() {
+    let mut s = session();
+    let a = s.execute("frame.create", &json!({"rect": [100, 300, 200, 400]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("frame.create", &json!({"rect": [200, 300, 300, 400]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("selection.set", &json!({"anchors": [[a, 0, 1], [b, 0, 2]]})).unwrap();
+    // Shift-clicking a frame off the selection drops its points too.
+    s.execute("selection.toggle", &json!({"id": a})).unwrap();
+    let id = |n| designcraft_doc::ItemId(n);
+    assert_eq!(s.doc().unwrap().selection.anchors, vec![(id(b), 0, 2)]);
+    // A point added before the first one: the selected point keeps pointing at the same anchor.
+    let l = s.execute("path.create", &json!({"anchors": [{"p": [100, 100]}, {"p": [200, 100]}, {"p": [300, 150]}]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("selection.set", &json!({"anchors": [[l, 0, 1]]})).unwrap();
+    s.execute("path.appendAnchor", &json!({"id": l, "anchor": {"p": [50, 120]}, "at": "start"})).unwrap();
+    let st = s.doc().unwrap();
+    let (_, si, ai) = st.selection.anchors[0];
+    let it = st.doc.item(id(l)).unwrap();
+    assert_eq!((it.xf * it.path.subpaths[si].anchors[ai].p).round(), designcraft_geom::Point::new(200.0, 100.0));
+    // `points` that isn't a list is refused, even with an `id` beside it.
+    for bad in [json!("x"), json!({"0": 1}), json!(5)] {
+        assert!(s.execute("path.moveAnchors", &json!({"points": bad, "id": l, "anchors": [[0, 0]], "dx": 5})).is_err(), "points {bad}");
+    }
+    for bad in [json!(3), json!(-1), json!("0")] {
+        assert!(s.execute("path.appendAnchor", &json!({"id": l, "anchor": {"p": [0, 0]}, "subpath": bad})).is_err(), "subpath {bad}");
+    }
+    assert_eq!(s.doc().unwrap().doc.item(id(l)).unwrap().path.subpaths[0].anchors.len(), 4, "nothing appended");
 }
 
 #[test]

@@ -82,8 +82,9 @@ fn table_specs() -> Vec<CommandSpec> {
             "table.insert",
             "Create Table",
             [],
-            Some("Cmd+Alt+Shift+T"),
-            "{rows?: body rows (4), cols? | columns? (4), headerRows? (0), footerRows? (0), width?} — at the text insertion point",
+            // InDesign's Cmd+Alt+Shift+T opens the Insert Table dialog (`app.insertTableDialog`).
+            None,
+            "{rows?: body rows (4, at most 500), cols? | columns? (4, at most 200), headerRows? (0), footerRows? (0, each at most 100), tableStyle?: name, width?} — at the text insertion point, styled in the same step",
             has_text,
             insert
         ),
@@ -92,7 +93,7 @@ fn table_specs() -> Vec<CommandSpec> {
             "Convert Text to Table",
             ["Table"],
             None,
-            "{columnSeparator?: tab|comma, width?: table width (default: the column)} — selected paragraphs become rows",
+            "{columnSeparator?: tab|comma|paragraph|text (tab), rowSeparator?: paragraph|tab|comma|text (paragraph), columns?: number of columns when both separators are the same (1, at most 200), tableStyle?: name, width?: table width (default: the column)} — the selected paragraphs become a table, as InDesign's Convert Text to Table; the words tab, comma and paragraph name those separators, any other text is the separator itself",
             has_text,
             convert_from_text
         ),
@@ -101,7 +102,7 @@ fn table_specs() -> Vec<CommandSpec> {
             "Convert Table to Text",
             ["Table"],
             None,
-            "{story?, table?, rows?: [a, b] | row?, cols?: [a, b] | col? (the target cells; default: the selection)} — cells separated by tabs, rows by paragraphs",
+            "{columnSeparator?: tab|comma|paragraph|text (tab), rowSeparator?: paragraph|tab|comma|text (paragraph), story?, table?, rows?: [a, b] | row?, cols?: [a, b] | col? (the target cells; default: the selection)} — the table becomes its cells' text, as InDesign's Convert Table to Text",
             in_table,
             convert_to_text
         ),
@@ -207,7 +208,7 @@ fn table_specs() -> Vec<CommandSpec> {
         cmd!(
             "table.placeGraphic",
             "Convert Cell to Graphic Cell",
-            ["Table", "Convert Cell Type"],
+            ["Table"],
             None,
             "{path? | base64?, name?: with base64, fit?: proportional|fill (default proportional), story?, table?, rows?: [a, b] | row?, cols?: [a, b] | col? (the target cells; default: the selection)} — an image in the target cell (its text is kept but hidden)",
             in_table,
@@ -216,7 +217,7 @@ fn table_specs() -> Vec<CommandSpec> {
         cmd!(
             "table.textCell",
             "Convert Cell to Text Cell",
-            ["Table", "Convert Cell Type"],
+            ["Table"],
             None,
             "{story?, table?, rows?: [a, b] | row?, cols?: [a, b] | col? (the target cells; default: the selection)} — drop the target cells' graphics",
             in_table,

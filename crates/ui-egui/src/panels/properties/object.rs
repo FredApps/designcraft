@@ -91,6 +91,75 @@ pub(super) fn transform_section(app: &mut DesignApp, ui: &mut Ui, i: &SelInfo) {
     }
 }
 
+/// Properties › Transform for points selected with Direct Selection: X/Y/W/H of the points'
+/// bounds (from the reference point); X and Y move the points, W and H spread or gather them
+/// about the reference point. No angles: those turn objects.
+pub(super) fn anchor_transform_section(app: &mut DesignApp, ui: &mut Ui, i: &SelInfo) {
+    let u = units(app);
+    let rp = app.ui.ref_point;
+    let b = block(ui, 2.0 * FIELD_H + 4.0);
+    let r = i.page_rect;
+    let (fx, fy) = ((rp % 3) as f64 / 2.0, (rp / 3) as f64 / 2.0);
+    let (x, y) = (r.x0 + r.width() * fx, r.y0 + r.height() * fy);
+    if let Some(p) = ref_point_proxy(ui, sub(b, 5.0, 10.0, 26.0, 26.0), rp) {
+        app.ui.ref_point = p;
+    }
+    let mut set = serde_json::Map::new();
+    // A single point has no size: as InDesign, W and H show its object's, greyed out.
+    let single = crate::panels::selected_anchor_points(app).len() == 1;
+    let (w, h) = if single { i.object_size } else { (r.width(), r.height()) };
+    for (row, (lx, vx, kx, lw, vw, kw)) in [("X:", x, "x", "W:", w, "width"), ("Y:", y, "y", "H:", h, "height")].into_iter().enumerate() {
+        let yy = row as f32 * 25.0;
+        place(ui, sub(b, 40.0, yy, 18.0, FIELD_H), |ui| widgets::caption_w(ui, lx, 18.0));
+        if let Some(v) = place(ui, sub(b, 59.0, yy, 54.0, FIELD_H), |ui| measure(ui, &format!("pt_{kx}"), Some(vx), u, 54.0)) {
+            set.insert(kx.into(), json!(v));
+        }
+        place(ui, sub(b, 120.0, yy, 19.0, FIELD_H), |ui| widgets::caption_w(ui, lw, 19.0));
+        let id = format!("pt_{kw}");
+        let field = NumField::measure(&id, Some(vw), u).width(54.0).enabled(!single);
+        if let Some(v) = place(ui, sub(b, 140.0, yy, 54.0, FIELD_H), |ui| field.show(ui)) {
+            set.insert(kw.into(), json!(v));
+        }
+    }
+    if !set.is_empty() {
+        let _ = transform_anchors(app, &Value::Object(set));
+    }
+    if more_options(ui, &app.ui.language).clicked() {
+        show_panel(app, "info");
+    }
+}
+
+/// Move the selected points as Properties › Transform's `set` asks ({x?, y?, width?, height?},
+/// in the page coordinates the fields show, from the reference point): one `path.moveAnchors`
+/// step, each point by its own movement. A width or height of a single point (0) can't scale.
+pub(crate) fn transform_anchors(app: &mut DesignApp, set: &Value) -> Result<Value, String> {
+    let points = crate::panels::selected_anchor_points(app);
+    let Some(i) = crate::panels::sel_info(app) else { return Ok(Value::Null) };
+    if points.is_empty() {
+        return Ok(Value::Null);
+    }
+    let rp = app.ui.ref_point;
+    let r = i.page_rect;
+    let (fx, fy) = ((rp % 3) as f64 / 2.0, (rp / 3) as f64 / 2.0);
+    // Page coordinates and spread coordinates differ by the ruler origin only.
+    let b = points.iter().skip(1).fold(designcraft_geom::Rect::from_points(points[0].1, points[0].1), |b, (_, p)| b.union_pt(*p));
+    let origin = (b.x0 - r.x0, b.y0 - r.y0);
+    let reference = (r.x0 + r.width() * fx + origin.0, r.y0 + r.height() * fy + origin.1);
+    let num = |k: &str| set.get(k).and_then(Value::as_f64).filter(|v| v.is_finite());
+    let scale = |new: Option<f64>, old: f64| new.filter(|_| old > 1e-9).map_or(1.0, |v| v.max(0.0) / old);
+    let (kx, ky) = (scale(num("width"), r.width()), scale(num("height"), r.height()));
+    let shift = (num("x").map_or(0.0, |v| v - (r.x0 + r.width() * fx)), num("y").map_or(0.0, |v| v - (r.y0 + r.height() * fy)));
+    let moved: Vec<Value> = points
+        .iter()
+        .map(|&((id, s, a), p)| {
+            let nx = reference.0 + (p.x - reference.0) * kx + shift.0;
+            let ny = reference.1 + (p.y - reference.1) * ky + shift.1;
+            json!([id.0, s, a, nx - p.x, ny - p.y])
+        })
+        .collect();
+    app.run("path.moveAnchors", json!({"points": moved}))
+}
+
 /// Properties › Transform for selected ruler guides: X for one vertical guide, Y for one
 /// horizontal guide; with several guides both fields are empty.
 pub(super) fn guide_section(app: &mut DesignApp, ui: &mut Ui) {
@@ -221,7 +290,7 @@ fn paint_stroke_type(p: &egui::Painter, r: Rect, kind: &str, c: egui::Color32) {
 
 /// A row of a preview dropdown's list, as InDesign's: a small preview of the choice (`preview_w`
 /// wide), then its name. Selected rows are highlighted.
-pub(super) fn preview_row(
+pub(crate) fn preview_row(
     ui: &mut Ui,
     selected: bool,
     label: &str,
@@ -269,7 +338,7 @@ pub(super) fn preview_dropdown(ui: &mut Ui, w: f32, label: &str, paint: impl FnO
 
 /// A corner shape's glyph, as InDesign draws it in its corner lists: the top edge running into the
 /// corner and the right edge leaving it, in a square centred in `r`.
-fn paint_corner_shape(p: &egui::Painter, r: Rect, shape: CornerShape, c: egui::Color32) {
+pub(crate) fn paint_corner_shape(p: &egui::Painter, r: Rect, shape: CornerShape, c: egui::Color32) {
     let side = (r.width() - 3.0).min(r.height() - 3.0).max(4.0);
     let o = pos2(r.center().x - side / 2.0, r.center().y - side / 2.0);
     let at = |x: f32, y: f32| pos2(o.x + x * side, o.y + y * side);

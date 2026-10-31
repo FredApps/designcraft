@@ -76,6 +76,12 @@ number, separator, sorting and level controls. Toggling visibility preserves the
 
 ## Remaining effort
 
+The Table of Contents separator field accepts `^y` (Right Indent Tab), with a special-character
+picker alongside it. Literal carets use `^^`; ordinary tabs, em/en spaces and surrounding spaces
+survive reopening. IDML preserves right-indent separators, including `$ID/^y`, so updating an
+imported TOC keeps page numbers at the right edge and inherits paragraph tab leaders. This covers
+10:54–16:08 of [Michael Bullo's TOC tutorial](https://www.youtube.com/watch?v=m4y2tm6LH_c).
+
 Applying a paragraph or character style now removes local values equal to the applied style,
 so text used to capture a style follows later edits to that style. Different local formatting
 and named character styles stay intact. Paragraph-style application treats selection endpoints
@@ -135,3 +141,6 @@ covers checking the sampled and redefined settings in the styles tutorial (2:45 
 | 2026-10-11 | minor | Added held Cmd+Space / Cmd+Alt+Space Zoom navigation and canvas input regression tests |
 | 2026-10-10 | minor | Threading row corrected to ✗ after checking the code (no out-port interaction, no thread command) |
 | 2026-10-10 | major | Created: measured menu coverage, 27-row interaction checklist from the code and issues |
+
+Double-clicking a section triangle in the Pages panel opens Numbering & Section Options for
+that section’s first page. It leaves parent-page editing and does not edit section data until confirmed.

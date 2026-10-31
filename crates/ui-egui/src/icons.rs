@@ -735,23 +735,40 @@ fn paint_shapes(pen: &mut Pen, name: &str) -> bool {
             pen.line(&[(10.0, 3.0), (10.0, 17.0)]);
             pen.line(&[(3.0, 10.0), (17.0, 10.0)]);
         }
-        // Pathfinder panel › Convert Point: a point on a path, with its direction handles.
-        "point-plain" | "point-corner" | "point-smooth" | "point-symmetrical" => {
-            match name {
-                "point-plain" | "point-corner" => pen.line(&[(3.0, 16.0), (10.0, 8.0), (17.0, 16.0)]),
-                _ => pen.line(&[(3.0, 16.0), (5.5, 11.5), (10.0, 8.0), (14.5, 11.5), (17.0, 16.0)]),
+        // Convert Point (Pathfinder panel, Properties › Convert Points): the anchor square on its
+        // path. Plain and Corner sit on a corner, Corner with a knob on each arm; Smooth and
+        // Symmetrical sit on a curve with a straight handle through them, its arms equal for
+        // Symmetrical.
+        "point-plain" | "point-corner" => {
+            pen.line(&[(17.0, 6.0), (6.0, 6.0), (6.0, 17.0)]);
+            if name == "point-corner" {
+                pen.fcircle(13.0, 6.0, 1.8);
+                pen.fcircle(6.0, 13.0, 1.8);
             }
-            let handles: &[(f32, f32)] = match name {
-                "point-corner" => &[(4.5, 4.0), (16.0, 5.0)],
-                "point-smooth" => &[(5.0, 8.0), (17.5, 8.0)],
-                "point-symmetrical" => &[(4.0, 8.0), (16.0, 8.0)],
-                _ => &[],
+            pen.frect(4.0, 4.0, 8.0, 8.0);
+        }
+        "point-smooth" | "point-symmetrical" => {
+            // A curve through the anchor (a quadratic sampled as a polyline), and the handle.
+            let ((p0, p2), (h0, h1)) = if name == "point-smooth" {
+                (((3.0, 6.5), (12.5, 18.0)), ((5.0, 4.0), (15.5, 15.5)))
+            } else {
+                (((7.0, 18.0), (17.5, 6.0)), ((5.0, 15.0), (15.0, 5.0)))
             };
-            for &(hx, hy) in handles {
-                pen.line(&[(10.0, 8.0), (hx, hy)]);
-                pen.fcircle(hx, hy, 1.4);
+            let m = (10.0f32, 10.0f32);
+            let c = (2.0 * m.0 - (p0.0 + p2.0) / 2.0, 2.0 * m.1 - (p0.1 + p2.1) / 2.0);
+            let curve: Vec<(f32, f32)> = (0..=12)
+                .map(|k| {
+                    let t = k as f32 / 12.0;
+                    let u = 1.0 - t;
+                    (u * u * p0.0 + 2.0 * u * t * c.0 + t * t * p2.0, u * u * p0.1 + 2.0 * u * t * c.1 + t * t * p2.1)
+                })
+                .collect();
+            pen.line(&curve);
+            pen.line(&[h0, h1]);
+            for (x, y) in [h0, h1] {
+                pen.frect(x - 1.4, y - 1.4, x + 1.4, y + 1.4);
             }
-            pen.frect(8.5, 6.5, 11.5, 9.5);
+            pen.frect(8.2, 8.2, 11.8, 11.8);
         }
         // ---- Properties panel glyphs (original drawings)
         "clock" => {
@@ -1008,6 +1025,18 @@ fn paint_text(pen: &mut Pen, name: &str) -> bool {
                 pen.line(&[(5.0, 13.5), (3.0, 15.5), (5.0, 17.5)]);
                 pen.line(&[(15.0, 13.5), (17.0, 15.5), (15.0, 17.5)]);
             }
+        }
+        // A box with one corner marked (Top Left, Top Right, Bottom Left, Bottom Right Corner).
+        "corner-tl" | "corner-tr" | "corner-bl" | "corner-br" => {
+            pen.w = 1.0;
+            pen.rect(4.0, 4.0, 16.0, 16.0);
+            let (x, y) = match name {
+                "corner-tl" => (2.5, 2.5),
+                "corner-tr" => (13.5, 2.5),
+                "corner-bl" => (2.5, 13.5),
+                _ => (13.5, 13.5),
+            };
+            pen.frect(x, y, x + 4.0, y + 4.0);
         }
         "vscale" => {
             pen.text(13.0, 10.5, "T", 15.0);

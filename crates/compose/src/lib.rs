@@ -268,6 +268,8 @@ pub struct Deco {
     pub path: Option<designcraft_geom::BezPath>,
     /// Shown on screen only (not printed or exported).
     pub nonprinting: bool,
+    /// Set to overprint (paragraph shading or border); PDF export doesn't overprint yet.
+    pub overprint: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -579,8 +581,10 @@ pub struct FrameSpec {
     pub page_name: Option<String>,
     /// Marker text of the section the frame's page is in (None on parent pages).
     pub section_marker: Option<String>,
-    /// Absolute document page the frame is on (None on parent pages).
+    /// Absolute document page the frame is on (None on parent pages and the pasteboard).
     pub page: Option<usize>,
+    /// The frame is on a parent spread.
+    pub parent: bool,
     /// Baseline grid in inner space: (first grid line y, increment).
     pub grid: Option<(f64, f64)>,
     /// The frame is on a left page (for towards/away-from-spine alignment).
@@ -815,6 +819,7 @@ pub(crate) fn frame_specs_placed(doc: &Document, sid: StoryId, placed: &[(ItemId
             page_name,
             section_marker,
             page,
+            parent: matches!(spread_ref, Some(designcraft_doc::SpreadRef::Parent(_))),
             grid,
             left_page,
             right_page,
@@ -860,7 +865,7 @@ struct SubstitutionInput<'a> {
     frame: Option<&'a FrameSpec>,
     opts: &'a ComposeOptions,
     var_story: bool,
-    var_cache: &'a mut HashMap<Option<usize>, Arc<Vec<String>>>,
+    var_cache: &'a mut HashMap<(Option<usize>, bool), Arc<Vec<String>>>,
     notes: &'a mut Notes,
 }
 
@@ -868,7 +873,9 @@ fn paragraph_substitution(input: SubstitutionInput<'_>) -> SubstCtx {
     let SubstitutionInput { doc, story, range: prange, props: pp, frame: cur_frame, opts, var_story, var_cache, notes } = input;
     let var_values = if var_story {
         let page = opts.page.or_else(|| cur_frame.and_then(|f| f.page));
-        var_cache.entry(page).or_insert_with(|| std::sync::Arc::new(vars::values(doc, page, opts.running.as_deref()))).clone()
+        // A parent page itself (not composed for one of the pages it applies to).
+        let parent = page.is_none() && cur_frame.is_some_and(|f| f.parent);
+        var_cache.entry((page, parent)).or_insert_with(|| std::sync::Arc::new(vars::values_shown(doc, page, parent, opts.running.as_deref()))).clone()
     } else {
         Default::default()
     };
@@ -2679,7 +2686,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
     let var_story = vars::has_vars(story);
     let mut notes = Notes::new(doc, story);
     let mut note_snaps: Vec<(u32, Option<usize>, usize)> = Vec::with_capacity(np);
-    let mut var_cache: std::collections::HashMap<Option<usize>, std::sync::Arc<Vec<String>>> = Default::default();
+    let mut var_cache: std::collections::HashMap<(Option<usize>, bool), std::sync::Arc<Vec<String>>> = Default::default();
     // Column balancing above spanning paragraphs: settled and trial bottoms by band, the search
     // in progress, and a budget for the re-lays.
     let mut limits: Rc<Vec<(BandKey, f64)>> = Rc::default();
@@ -5406,6 +5413,7 @@ fn vertical_justify(ft: &mut FrameText, f: &FrameSpec, spanned: bool, notes: &de
             continue;
         }
         let _ = a;
+        let before: Vec<f64> = idx.iter().map(|&i| ft.lines[i].baseline).collect();
         match f.opts.vertical_justification {
             VerticalJustification::Center => idx.iter().for_each(|&i| ft.lines[i].baseline += space / 2.0),
             VerticalJustification::Bottom => idx.iter().for_each(|&i| ft.lines[i].baseline += space),
@@ -5424,13 +5432,38 @@ fn vertical_justify(ft: &mut FrameText, f: &FrameSpec, spanned: bool, notes: &de
                     .collect();
                 let n = rows.last().copied().unwrap_or(0);
                 if n > 0 {
-                    let per = space / n as f64;
+                    // Paragraph Spacing Limit: the space goes between paragraphs, up to the limit
+                    // each; what is left spreads over every line (all of it with no limit).
+                    let mut starts = vec![false; n + 1];
                     for (&i, &k) in idx.iter().zip(&rows) {
-                        ft.lines[i].baseline += per * k as f64;
+                        if k > 0 && ft.lines[i].first_in_para {
+                            starts[k] = true;
+                        }
+                    }
+                    let gaps = starts.iter().filter(|s| **s).count();
+                    let limit = f.opts.vj_paragraph_spacing_limit.max(0.0);
+                    let para = if gaps > 0 && limit > 0.0 { (space / gaps as f64).min(limit) } else { 0.0 };
+                    let per = (space - para * gaps as f64) / n as f64;
+                    let mut shift = vec![0.0; n + 1];
+                    for k in 1..=n {
+                        shift[k] = shift[k - 1] + per + if starts[k] { para } else { 0.0 };
+                    }
+                    for (&i, &k) in idx.iter().zip(&rows) {
+                        ft.lines[i].baseline += shift[k];
                     }
                 }
             }
             _ => {}
+        }
+        // A drop cap moves with its line.
+        for (&i, b) in idx.iter().zip(before) {
+            let line = &mut ft.lines[i];
+            let dy = line.baseline - b;
+            if let Some(dc) = &mut line.drop_cap {
+                dc.baseline += dy;
+                dc.rect.y0 += dy;
+                dc.rect.y1 += dy;
+            }
         }
     }
 }
@@ -5949,6 +5982,7 @@ mod column_allocation_safety_tests {
             page_name: None,
             section_marker: None,
             page: None,
+            parent: false,
             grid: None,
             left_page: false,
             right_page: false,

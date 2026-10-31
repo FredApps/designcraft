@@ -3,6 +3,7 @@ use egui_kittest::{
     kittest::{NodeT, Queryable},
 };
 
+use super::object::transform_anchors;
 use super::*;
 
 /// A link to a panel whose flyout is open leaves the flyout open.
@@ -1097,6 +1098,83 @@ fn apply_to_text_colours_the_text_of_several_text_frames() {
         assert_eq!(doc.story(*story).unwrap().char_format_at(0).over.fill.as_deref(), Some(CYAN), "every frame's text is cyan");
         assert_eq!(doc.item(designcraft_doc::ids::ItemId(*id)).unwrap().fill.swatch, "[None]", "the frames aren't");
     }
+}
+
+/// Points selected with Direct Selection: InDesign's "Anchor Point(s)" panel, with Convert
+/// Points and the Delete Point(s) quick action, as in the Zero2Graphic tutorial (1:25).
+#[test]
+fn selected_points_show_convert_points_and_delete_points() {
+    let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+    app.run("file.new", json!({})).unwrap();
+    let a = app.run("frame.create", json!({"rect": [72, 72, 172, 172]})).unwrap()["id"].as_u64().unwrap();
+    let b = app.run("frame.create", json!({"rect": [200, 72, 300, 172]})).unwrap()["id"].as_u64().unwrap();
+    app.run("selection.set", json!({"anchors": [[a, 0, 0], [b, 0, 0]]})).unwrap();
+    assert_eq!(selection_title(&app, &super::super::sel_info(&app)), "Anchor Point(s)");
+    let mut h = panel(app);
+    // The four point types (Appearance has a Corner row too).
+    for tip in ["Plain", "Corner", "Smooth", "Symmetrical"] {
+        assert!(h.get_all_by_label(tip).next().is_some(), "{tip}");
+    }
+    assert!(h.query_by_label("Align").is_none(), "only the sections InDesign shows for points");
+    h.get_by_label("Delete Point(s)").click();
+    h.run_steps(3);
+    let d = &h.state().session.active().unwrap().doc;
+    for id in [a, b] {
+        assert_eq!(d.item(designcraft_doc::ids::ItemId(id)).unwrap().path.subpaths[0].anchors.len(), 3, "one point gone from each");
+    }
+}
+
+/// With points selected, Transform measures and moves the points: one corner of a frame shows
+/// that corner, not the frame, and X moves the corner alone; W spreads two points apart.
+#[test]
+fn transform_measures_and_moves_the_selected_points() {
+    let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+    app.run("file.new", json!({})).unwrap();
+    let a = app.run("frame.create", json!({"rect": [72, 72, 172, 172]})).unwrap()["id"].as_u64().unwrap();
+    let corner = |app: &DesignApp, i: usize| {
+        let d = &app.session.active().unwrap().doc;
+        let it = d.item(designcraft_doc::ids::ItemId(a)).unwrap();
+        it.xf * it.path.subpaths[0].anchors[i].p
+    };
+    let first = corner(&app, 0);
+    app.run("selection.set", json!({"anchors": [[a, 0, 0]]})).unwrap();
+    let i = super::super::sel_info(&app).unwrap();
+    assert_eq!((i.page_rect.width(), i.page_rect.height()), (0.0, 0.0), "a point, not the frame");
+    app.ui.ref_point = 0;
+    transform_anchors(&mut app, &json!({"x": i.page_rect.x0 + 10.0})).unwrap();
+    assert_eq!(corner(&app, 0), first + designcraft_geom::Vec2::new(10.0, 0.0), "the corner moved");
+    assert_eq!(corner(&app, 2), designcraft_geom::Point::new(172.0, 172.0), "the opposite corner stayed");
+    // Two points 100 pt apart, W 200 from the left: the right one goes 100 further.
+    app.run("selection.set", json!({"anchors": [[a, 0, 2], [a, 0, 3]]})).unwrap();
+    let (p2, p3) = (corner(&app, 2), corner(&app, 3));
+    let w = super::super::sel_info(&app).unwrap().page_rect.width();
+    transform_anchors(&mut app, &json!({"width": w * 2.0})).unwrap();
+    let (left, right) = if p2.x < p3.x { (2, 3) } else { (3, 2) };
+    let (pl, pr) = if left == 2 { (p2, p3) } else { (p3, p2) };
+    assert_eq!(corner(&app, left), pl, "the reference side stays");
+    assert!((corner(&app, right).x - (pr.x + w)).abs() < 1e-9, "spread to twice the width");
+}
+
+/// One point has no size: W and H show its frame's, greyed out, as InDesign; two points
+/// measure (and set) their own.
+#[test]
+fn one_selected_point_shows_its_frames_size_greyed() {
+    let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+    app.run("file.new", json!({})).unwrap();
+    let a = app.run("frame.create", json!({"rect": [72, 72, 172, 222]})).unwrap()["id"].as_u64().unwrap();
+    app.run("selection.set", json!({"anchors": [[a, 0, 0]]})).unwrap();
+    assert_eq!(super::super::sel_info(&app).unwrap().object_size, (100.0, 150.0));
+    let mut h = panel(app);
+    h.run_steps(2);
+    let greyed = |h: &Harness<'_, DesignApp>| {
+        h.query_all_by(|n| n.role() == egui::accesskit::Role::TextInput && n.is_disabled()).filter_map(|n| n.value()).collect::<Vec<_>>()
+    };
+    let u = units(h.state());
+    let f = |v| designcraft_geom::units::format_measure(v, u);
+    assert_eq!(greyed(&h), [f(100.0), f(150.0)], "the frame's W and H, greyed");
+    h.state_mut().run("selection.set", json!({"anchors": [[a, 0, 0], [a, 0, 2]]})).unwrap();
+    h.run_steps(2);
+    assert!(greyed(&h).is_empty(), "two points have a size of their own");
 }
 
 #[test]

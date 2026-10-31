@@ -527,7 +527,7 @@ fn table_of_contents_definition_round_trips_through_idml_and_updates() {
     s.execute(
         "toc.generate",
         &json!({"page": page, "title": "Inside", "titleStyle": basic, "createBookmarks": true, "entries": [
-            {"style": "Cover Title", "level": 1, "pageNumber": "before", "separator": " ^ "},
+            {"style": "Cover Title", "level": 1, "pageNumber": "before", "separator": " ^ \u{E006} "},
             {"style": "Headline", "level": 2, "entryStyle": basic, "pageNumber": "none"},
         ]}),
     )

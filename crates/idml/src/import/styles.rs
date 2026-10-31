@@ -223,6 +223,11 @@ impl<'r> Importer<'r> {
         self.para_names.get(r).cloned().unwrap_or_else(|| names::style_name_in(PARA_BUILTINS, &unescape_id(r.trim_start_matches("ParagraphStyle/"))))
     }
 
+    /// A paragraph style reference written as an element's text: as written when it names a
+    /// style, otherwise without surrounding whitespace (see [`Self::listed_char_style_ref`]).
+    pub(super) fn listed_para_style_ref(&self, r: &str) -> String {
+        if self.para_names.contains_key(r) { self.para_style_ref(r) } else { self.para_style_ref(r.trim()) }
+    }
     /// A character style reference written as an element's text (nested, line and GREP styles).
     /// A style name may end in a space, so the reference is used as written when it names a
     /// style; only otherwise is surrounding whitespace dropped.

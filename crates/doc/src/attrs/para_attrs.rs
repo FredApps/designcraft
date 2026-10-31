@@ -141,6 +141,9 @@ attr_set! {
         shading_on: bool = false,
         shading_color: String = "[Black]".into(),
         shading_tint: f32 = 0.2,
+        /// Overprint (InDesign's Paragraph Shading › Overprint): stored and kept through IDML;
+        /// PDF export doesn't overprint yet.
+        shading_overprint: bool = false,
         shading_offsets: [f64; 4] = [0.0; 4],
         /// Paragraph border: stroke weights (top, left, bottom, right), colour, and offsets past the
         /// text (top, left, bottom, right).
@@ -148,6 +151,8 @@ attr_set! {
         border_weights: [f64; 4] = [1.0; 4],
         border_color: String = "[Black]".into(),
         border_tint: f32 = 1.0,
+        /// Overprint the border's stroke (stored and kept through IDML, as `ParagraphBorderOverprint`).
+        border_overprint: bool = false,
         border_offsets: [f64; 4] = [0.0; 4],
         /// The border's stroke type (a document stroke style by name, or a built-in type), cap and
         /// join.
@@ -167,6 +172,8 @@ attr_set! {
         /// The colour between the dashes, dots or stripes of a border that isn't solid.
         border_gap_color: String = "[None]".into(),
         border_gap_tint: f32 = 1.0,
+        /// Overprint the border's gap colour (stored and kept through IDML).
+        border_gap_overprint: bool = false,
         /// Shading corners: top left, top right, bottom right, bottom left.
         shading_corners: [designcraft_geom::corners::Corner; 4] = [designcraft_geom::corners::Corner::default(); 4],
         shading_width: BoxWidth = BoxWidth::Column,

@@ -3082,11 +3082,18 @@ fn only_english_text_gets_english_hyphenation() {
     let hyphenated = |d: &Document, sid| all_lines(&compose_story(d, sid, &ComposeOptions::default())).iter().filter(|l| l.hyphenated).count();
     let (d, sid, _) = doc_with(text, narrow, ParaAttrs::default());
     assert!(hyphenated(&d, sid) > 0, "English hyphenates");
-    let mut d2 = d.clone();
-    let st = d2.story_mut(sid).unwrap();
-    let n = st.len();
-    st.format_chars(0..n, |f| f.over.language = Some("French".into()));
-    assert_eq!(hyphenated(&d2, sid), 0, "French isn't hyphenated with English rules");
+    // A language without bundled patterns isn't hyphenated with English rules.
+    let in_language = |lang: &str| {
+        let mut d2 = d.clone();
+        let st = d2.story_mut(sid).unwrap();
+        let n = st.len();
+        st.format_chars(0..n, |f| f.over.language = Some(lang.into()));
+        hyphenated(&d2, sid)
+    };
+    assert_eq!(in_language("Swedish"), 0, "Swedish isn't hyphenated with English rules");
+    // French and Italian hyphenate with their own patterns.
+    assert!(in_language("French") > 0, "French hyphenates (hyph-fr)");
+    assert!(in_language("Italian") > 0, "Italian hyphenates (hyph-it)");
 }
 
 // A text frame's bottom inset constrains its last baseline. The full font descent
@@ -3736,6 +3743,21 @@ fn cap_of(g: &PlacedGlyph) -> f64 {
 /// x of the first glyph of `l` set from story byte `from` on.
 fn text_x(l: &Line, from: usize) -> f64 {
     l.glyphs.iter().find(|g| g.len > 0 && g.byte >= from).map(|g| g.x).unwrap()
+}
+
+/// Vertical justification moves the drop cap's box with its line.
+#[test]
+fn drop_cap_box_follows_vertical_justification() {
+    let (mut d, sid, fid) = drop_doc_in(&[LOREM; 2].join(" "), Rect::new(0.0, 0.0, 300.0, 400.0), drop_cap(3, 1));
+    let top = compose_story(&d, sid, &ComposeOptions::default());
+    d.item_mut(fid).unwrap().text_frame_mut().unwrap().options.vertical_justification = designcraft_doc::VerticalJustification::Bottom;
+    let bottom = compose_story(&d, sid, &ComposeOptions::default());
+    let (a, b) = (&top.frame(fid).unwrap().lines[0], &bottom.frame(fid).unwrap().lines[0]);
+    let dy = b.baseline - a.baseline;
+    assert!(dy > 1.0);
+    let (da, db) = (a.drop_cap.unwrap(), b.drop_cap.unwrap());
+    assert!((db.baseline - da.baseline - dy).abs() < 1e-6);
+    assert!((db.rect.y0 - da.rect.y0 - dy).abs() < 1e-6 && (db.rect.y1 - da.rect.y1 - dy).abs() < 1e-6);
 }
 
 #[test]
@@ -7481,6 +7503,60 @@ fn anchored_object_wraps_its_own_storys_later_lines() {
     assert!((o.origin.y - top).abs() < 1e-6);
 }
 
+/// Vertical Justification › Justify with a Paragraph Spacing Limit: the space goes between the
+/// paragraphs (up to the limit each), the lines of a paragraph keep their leading; past the limit
+/// the rest spreads over every line. Without a limit it spreads over every line.
+#[test]
+fn justify_paragraph_spacing_limit() {
+    let text = "One line.
+Two
+Three";
+    let baselines = |limit: f64| {
+        let (mut d, sid, fid) = doc_with(text, Rect::new(0.0, 0.0, 300.0, 400.0), ParaAttrs::default());
+        let o = &mut d.item_mut(fid).unwrap().text_frame_mut().unwrap().options;
+        o.vertical_justification = designcraft_doc::VerticalJustification::Justify;
+        o.vj_paragraph_spacing_limit = limit;
+        let cs = compose_story(&d, sid, &ComposeOptions::default());
+        all_lines(&cs).iter().map(|l| l.baseline).collect::<Vec<_>>()
+    };
+    let (none, big, small) = (baselines(0.0), baselines(1000.0), baselines(20.0));
+    assert_eq!(none.len(), 3);
+    let gaps = |b: &[f64]| (b[1] - b[0], b[2] - b[1]);
+    // No limit: equal steps. A big limit: all of it between paragraphs (here every line is one).
+    assert!((gaps(&none).0 - gaps(&none).1).abs() < 1e-6, "{none:?}");
+    assert!((gaps(&big).0 - gaps(&big).1).abs() < 1e-6, "{big:?}");
+    // A small limit: every paragraph gap takes the whole 20 pt, and the rest spreads over lines,
+    // so each gap is wider than the top-aligned one by at least 20 pt and narrower than with a big limit.
+    let top = {
+        let (d, sid, _) = doc_with(text, Rect::new(0.0, 0.0, 300.0, 400.0), ParaAttrs::default());
+        all_lines(&compose_story(&d, sid, &ComposeOptions::default())).iter().map(|l| l.baseline).collect::<Vec<_>>()
+    };
+    let (natural, small_gaps, big_gaps) = (gaps(&top), gaps(&small), gaps(&big));
+    assert!(small_gaps.0 >= natural.0 + 20.0 - 1e-6 && small_gaps.1 >= natural.1 + 20.0 - 1e-6, "{top:?} {small:?}");
+    assert!(small_gaps.0 <= big_gaps.0 + 1e-6, "{small:?} {big:?}");
+    assert!((none[2] - big[2]).abs() < 1e-6 && (none[2] - small[2]).abs() < 1e-6, "the last line stays at the bottom");
+    // A paragraph of two lines keeps its leading when the limit absorbs the space.
+    let (mut d, sid, fid) = doc_with(
+        &[LOREM, "End."].join(
+            "
+",
+        ),
+        Rect::new(0.0, 0.0, 300.0, 600.0),
+        ParaAttrs::default(),
+    );
+    let o = &mut d.item_mut(fid).unwrap().text_frame_mut().unwrap().options;
+    o.vertical_justification = designcraft_doc::VerticalJustification::Justify;
+    o.vj_paragraph_spacing_limit = 10_000.0;
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let lines = all_lines(&cs);
+    let first: Vec<f64> = lines.iter().filter(|l| l.para == 0).map(|l| l.baseline).collect();
+    assert!(first.len() > 2, "LOREM runs over several lines");
+    let lead = first[1] - first[0];
+    assert!(first.windows(2).all(|w| (w[1] - w[0] - lead).abs() < 1e-6), "the paragraph's lines keep their leading: {first:?}");
+    let last = lines.iter().find(|l| l.para == 1).unwrap().baseline;
+    assert!(last - first[first.len() - 1] > lead + 50.0, "the space went between the paragraphs");
+}
+
 /// Each object's wrap pushes the anchors after it down, so where each object lands depends on the
 /// wraps of all those before it; every object still ends up wrapping the lines it hangs over.
 #[test]
@@ -8332,4 +8408,35 @@ fn anchored_text_frames_compose_against_the_grid_where_they_are_placed() {
     let before = cache.get(&d, nsid, None);
     Arc::make_mut(&mut d.spreads[1]).pages[1].side = designcraft_doc::PageSide::Left;
     assert!(!Arc::ptr_eq(&before, &cache.get(&d, nsid, None)));
+}
+
+/// A cross-reference's text breaks at its spaces like ordinary text (it is real text in
+/// InDesign), not inside words; edited text whose destination is gone shows its saved page.
+#[test]
+fn cross_reference_text_breaks_at_its_spaces() {
+    let (mut d, sid, _) = doc_with("See X.", Rect::new(36.0, 36.0, 110.0, 400.0), ParaAttrs::default());
+    let at = d.story(sid).unwrap().text.find('X').unwrap();
+    let st = d.story_mut(sid).unwrap();
+    st.delete(at..at + 1);
+    st.insert_xref(
+        at,
+        designcraft_doc::CrossRef {
+            text: Some("Page <pageNum />: Bove, Vinny. \"Advent Horizon.\" 1996. Volume 6, issue 5.".into()),
+            page: Some("7".into()),
+            ..Default::default()
+        },
+    );
+    let x = d.story(sid).unwrap().xrefs[0].clone();
+    let shown = crate::xref::xref_text(&d, &x, None);
+    assert_eq!(shown, "Page 7: Bove, Vinny. \"Advent Horizon.\" 1996. Volume 6, issue 5.");
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let lines: Vec<String> =
+        cs.frames[0].lines.iter().map(|l| l.glyphs.iter().filter(|g| g.visible).map(|g| g.rendered_char).collect::<String>()).collect();
+    assert!(lines.len() > 3, "{lines:?}");
+    let words: Vec<&str> = format!("See {shown}.").leak().split(' ').collect();
+    for l in &lines {
+        for w in l.split(' ').filter(|w| !w.is_empty()) {
+            assert!(words.contains(&w), "a line breaks inside a word: {w:?} in {lines:?}");
+        }
+    }
 }

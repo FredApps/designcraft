@@ -409,6 +409,7 @@ fn page_ui(app: &DesignApp, ui: &mut egui::Ui, d: &mut Dialog, page: &str) {
             let key = page;
             heading(ui, &tr("Blending"));
             grid("b").show(ui, |ui| {
+                mode_row(ui, d, key, &tr);
                 row(ui, "Color:");
                 swatch(app, ui, d, &[key, "color"]);
                 row(ui, "Opacity:");
@@ -450,23 +451,7 @@ fn page_ui(app: &DesignApp, ui: &mut egui::Ui, d: &mut Dialog, page: &str) {
             let key = page;
             heading(ui, &tr("Blending"));
             grid("b").show(ui, |ui| {
-                // Inner Glow: its blend mode (Screen, as InDesign starts it).
-                if key == "innerGlow" {
-                    row(ui, "Mode:");
-                    let cur = d.fields.get("fx").and_then(|f| f["innerGlow"]["mode"].as_str()).unwrap_or("Screen").to_string();
-                    let label = |m: &designcraft_color::BlendMode| {
-                        serde_json::to_value(m).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
-                    };
-                    let shown = designcraft_color::BlendMode::ALL.iter().find(|m| label(m) == cur).map_or("Screen", |m| m.label());
-                    craft_ui::ComboBox::from_id_salt("fx_glow_mode").selected_text(tr(shown)).width(150.0).show_ui(ui, |ui| {
-                        for m in designcraft_color::BlendMode::ALL {
-                            if ui.selectable_label(label(&m) == cur, tr(m.label())).clicked() {
-                                set(d, &["innerGlow", "mode"], json!(label(&m)));
-                            }
-                        }
-                    });
-                    ui.end_row();
-                }
+                mode_row(ui, d, key, &tr);
                 row(ui, "Color:");
                 swatch(app, ui, d, &[key, "color"]);
                 row(ui, "Opacity:");
@@ -654,6 +639,28 @@ fn summary(lang: &str, d: &Dialog) -> String {
     let on: Vec<String> = PAGES.iter().skip(1).filter(|p| is_on(&fx, p.0)).map(|p| crate::i18n::tr(lang, p.1).to_string()).collect();
     let effects = if on.is_empty() { crate::i18n::tr(lang, "(no effects)").to_string() } else { on.join(", ") };
     format!("{}: {} {:.0}%; {}", crate::i18n::tr(lang, "OBJECT").to_uppercase(), crate::i18n::tr(lang, blend), opacity * 100.0, effects)
+}
+
+/// The Mode row of a shadow's or glow's Blending: its blend mode, as InDesign's (shadows start
+/// Multiply, glows Screen).
+fn mode_row(ui: &mut egui::Ui, d: &mut Dialog, key: &str, tr: &dyn Fn(&str) -> String) {
+    crate::rtl::label(ui, tr("Mode:"));
+    let fallback = if key.ends_with("Glow") { "Screen" } else { "Multiply" };
+    let cur = d.fields.get("fx").and_then(|f| f[key]["mode"].as_str()).unwrap_or(fallback).to_string();
+    let name = |m: &designcraft_color::BlendMode| serde_json::to_value(m).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    let shown = designcraft_color::BlendMode::ALL.iter().find(|m| name(m) == cur).map_or(fallback, |m| m.label());
+    let mut picked = None;
+    craft_ui::ComboBox::from_id_salt(("fx_mode", key.to_string())).selected_text(tr(shown)).width(150.0).show_ui(ui, |ui| {
+        for m in designcraft_color::BlendMode::ALL {
+            if ui.selectable_label(name(&m) == cur, tr(m.label())).clicked() {
+                picked = Some(name(&m));
+            }
+        }
+    });
+    if let Some(m) = picked {
+        set(d, &[key, "mode"], json!(m));
+    }
+    ui.end_row();
 }
 
 /// The dialog's body.
@@ -902,6 +909,30 @@ mod tests {
         assert_eq!(deg, 175.0);
         assert_eq!(wrap_angle(-180.0), 180.0);
         assert_eq!(wrap_angle(540.0), 180.0);
+    }
+
+    /// Drop Shadow and Outer Glow have InDesign's Mode under Blending (Multiply and Screen to
+    /// start); a mode picked there is what OK applies.
+    #[test]
+    fn shadows_and_glows_have_a_blend_mode() {
+        let (mut app, id) = app_with_frame();
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx, "en");
+        open(&mut app, "dropShadow");
+        let texts = frame(&mut app, &ctx);
+        assert!(texts.iter().any(|x| x.trim() == "Mode:") && texts.iter().any(|x| x.trim() == "Multiply"), "{texts:?}");
+        crate::dialogs::cancel(&mut app);
+        open(&mut app, "outerGlow");
+        let texts = frame(&mut app, &ctx);
+        assert!(texts.iter().any(|x| x.trim() == "Screen"), "{texts:?}");
+        if let Some(d) = app.ui.dialog.as_mut() {
+            set(d, &["outerGlow", "mode"], json!("Normal"));
+        }
+        frame(&mut app, &ctx);
+        crate::dialogs::confirm(&mut app).unwrap();
+        let fx = app.session.doc().unwrap().doc.item(designcraft_doc::ItemId(id)).unwrap().effects.clone();
+        assert!(fx.outer_glow.on);
+        assert_eq!(fx.outer_glow.mode, designcraft_color::BlendMode::Normal);
     }
 
     #[test]
