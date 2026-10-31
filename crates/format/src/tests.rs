@@ -771,18 +771,23 @@ fn toc_scope_legacy_defaults_native_roundtrip_and_required_version() {
     let legacy = json!({"story": story.0, "title": "Contents", "entries": [{"style": "Head", "level": 1}], "pageNumbers": true});
     let toc: Toc = serde_json::from_value(legacy).unwrap();
     assert_eq!(toc.scope, TocScope::CurrentDocument);
+    assert_eq!(toc.idml_include_book_documents, None);
+    assert!(serde_json::to_value(&toc).unwrap().get("idmlIncludeBookDocuments").is_none());
     d.toc = Some(toc);
     for (scope, version) in [(TocScope::CurrentDocument, 2), (TocScope::EntireBook, 5)] {
         d.toc.as_mut().unwrap().scope = scope;
-        assert_eq!(required_version(&d), version);
-        let bytes = save(&d).unwrap();
-        let mut zip = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
-        let mut meta = String::new();
-        zip.by_name("meta.json").unwrap().read_to_string(&mut meta).unwrap();
-        assert_eq!(serde_json::from_str::<Value>(&meta).unwrap()["version"], version);
-        let back = load(&bytes).unwrap();
-        assert_eq!(back.toc, d.toc);
-        assert_eq!(back.toc.as_ref().unwrap().entries, [TocEntry::new("Head", 1)]);
+        for preference in [None, Some(false), Some(true)] {
+            d.toc.as_mut().unwrap().idml_include_book_documents = preference;
+            assert_eq!(required_version(&d), version);
+            let bytes = save(&d).unwrap();
+            let mut zip = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+            let mut meta = String::new();
+            zip.by_name("meta.json").unwrap().read_to_string(&mut meta).unwrap();
+            assert_eq!(serde_json::from_str::<Value>(&meta).unwrap()["version"], version);
+            let back = load(&bytes).unwrap();
+            assert_eq!(back.toc, d.toc);
+            assert_eq!(back.toc.as_ref().unwrap().entries, [TocEntry::new("Head", 1)]);
+        }
     }
     d.toc.as_mut().unwrap().scope = TocScope::CurrentDocument;
     assert_eq!(required_version(&d), 2, "a local TOC does not require a new reader");
@@ -900,6 +905,7 @@ fn entire_book_toc_survives_duplicate_frame_ids_on_load() {
     d.toc = Some(Toc {
         story: toc_story,
         scope: TocScope::EntireBook,
+        idml_include_book_documents: None,
         create_bookmarks: false,
         entries: vec![TocEntry::new("Head", 1)],
         title: "Contents".into(),

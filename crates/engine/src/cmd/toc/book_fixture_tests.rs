@@ -20,6 +20,7 @@ pub(crate) fn toc_document(width: f64, height: f64, primary: bool, separator: &s
     entry.separator = Some(separator.into());
     d.toc = Some(Toc {
         scope: TocScope::EntireBook,
+        idml_include_book_documents: None,
         story,
         title: String::new(),
         entries: vec![entry],

@@ -355,12 +355,14 @@ impl<'r> Importer<'r> {
         }
         let title: String = ts.get("Title").unwrap_or("").chars().filter(|c| !matches!(c, '\n' | '\r' | '\u{2029}')).take(1024).collect();
         let title_style = known(ts.get("TitleStyle")).filter(|n| n != "TOC Title");
-        let scope = if ts.get("IncludeBookDocuments").is_some_and(|v| v.trim() == "true") {
-            designcraft_doc::TocScope::EntireBook
-        } else {
-            designcraft_doc::TocScope::CurrentDocument
-        };
+        // An InDesign preference is not an explicit DesignCraft Book execution request.
+        let idml_include_book_documents = ts.get("IncludeBookDocuments").and_then(|v| match v.trim() {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        });
+        let scope = designcraft_doc::TocScope::CurrentDocument;
         let create_bookmarks = ts.get("CreateBookmarks").or_else(|| ts.get("CreatePdfBookmarks")) == Some("true");
-        Some(designcraft_doc::Toc { scope, story, title, entries, page_numbers: true, title_style, create_bookmarks })
+        Some(designcraft_doc::Toc { scope, idml_include_book_documents, story, title, entries, page_numbers: true, title_style, create_bookmarks })
     }
 }

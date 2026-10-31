@@ -5310,3 +5310,25 @@ fn frame_size_dialog_keeps_its_units_while_open() {
     let b = added[0].bounds();
     assert!((b.width() - 144.0).abs() < 0.01 && (b.height() - 216.0).abs() < 0.01, "{b:?}");
 }
+
+#[test]
+fn imported_book_preference_does_not_select_entire_book_in_the_dialog() {
+    let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+    app.run("file.newSample", json!({})).unwrap();
+    app.run("toc.generate", json!({"styles":["Headline"]})).unwrap();
+    app.session
+        .edit(|d, _| {
+            d.toc.as_mut().unwrap().idml_include_book_documents = Some(true);
+            Ok(())
+        })
+        .unwrap();
+    open_toc(&mut app);
+    let dialog = app.ui.dialog.as_ref().unwrap();
+    assert_eq!(dialog.s("scope"), "currentDocument");
+    assert!(!dialog.b("bookAvailable"));
+    assert_eq!(toc_params(&app, dialog)["scope"], "currentDocument");
+    confirm(&mut app).unwrap();
+    let toc = app.session.doc().unwrap().doc.toc.as_ref().unwrap();
+    assert_eq!(toc.scope, designcraft_doc::TocScope::CurrentDocument);
+    assert_eq!(toc.idml_include_book_documents, Some(true));
+}

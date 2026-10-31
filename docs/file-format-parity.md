@@ -1,6 +1,6 @@
 # File format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-30 · **Change:** minor (stable-layout Book TOC scope; PDF/X-4 visible unembedded font detection, #909; IDML liquid guide types, #872; .indd and .indt open through indd-utils; XLSX cached values preserve numeric precision and text; shared print spooler; Windows CI passes; content-indexed asset deduplication, #727) · **Target:** Adobe InDesign 2026 (21.6)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-31 · **Change:** minor (IDML TOC preference separated from execution scope; stable-layout Book TOC scope; PDF/X-4 visible unembedded font detection, #909; IDML liquid guide types, #872; .indd and .indt open through indd-utils; XLSX cached values preserve numeric precision and text; shared print spooler; Windows CI passes; content-indexed asset deduplication, #727) · **Target:** Adobe InDesign 2026 (21.6)
 
 Every format InDesign 2026 reads or writes, with DesignCraft's support, fidelity and tests. The
 InDesign list comes from its bundle's `Info.plist` (`CFBundleDocumentTypes`,
@@ -15,10 +15,11 @@ Read/Write: **✓** supported · **~** partial · **✗** missing · **—** InD
 Weight: what share of an InDesign professional's file traffic the format carries (used for the
 score below).
 
-Native format 5 preserves Entire Book TOC scope so older readers cannot silently regenerate it as a document-local TOC. Current Document retains its prior minimum format requirement. IDML TOC styles map the scope through `IncludeBookDocuments` in both directions; collection still requires an open Book and stable numbering.
+Native format 5 preserves Entire Book TOC scope so older readers cannot silently regenerate it as a document-local TOC. Current Document retains its prior minimum format requirement. IDML TOC styles retain `IncludeBookDocuments` as an optional interchange preference while importing with Current Document execution. Explicit Entire Book scope exports true; otherwise the imported preference is preserved, defaulting to false. The preference survives native Save/reopen without raising the native version requirement; Book-wide execution still requires an open Book and bounded stabilization.
 TOC PDF bookmark generation remains available for Current Document scope. Entire Book generation
 rejects that option because chapter-local destinations cannot be represented as bookmarks in the
-TOC document; IDML retains both the scope and bookmark option without silently changing them.
+TOC document; IDML retains the IncludeBookDocuments preference and bookmark option without
+automatically activating Book execution on import.
 Books retain their existing JSON manifest structure. The optional `numberingNeedsUpdate` boolean
 defaults to false when absent; a reorder sets it until Update Numbering or a saved stable Book TOC
 refresh succeeds. Old documents

@@ -126,8 +126,10 @@ impl<'a> BookCollector<'a> {
     }
 }
 
-/// Called after the command's normal reflow/caption/autosize passes, before recording undo.
-/// Accept only fixed, already-numbered layouts; do not iterate or write chapters.
+/// Defensive backstop for TOC commands that did not take the bounded Book stabilization path.
+/// Successful native Entire Book commands skip this check in `Session::execute_unguarded`.
+/// A bypass must not adopt pagination/heading changes or overset after ordinary reflow. The
+/// caller restores the prior document on rejection; this check never writes chapter files.
 pub(crate) fn validate_book_layout(before: &Document, after: &Document) -> Result<()> {
     let Some(toc) = after.toc.as_ref().filter(|t| t.scope == TocScope::EntireBook) else { return Ok(()) };
     let old = collect(before, &toc.entries, before.toc.as_ref().map(|t| t.story));
@@ -135,14 +137,11 @@ pub(crate) fn validate_book_layout(before: &Document, after: &Document) -> Resul
     if before.page_count() != after.page_count() || old != new {
         return Err(bad(
             "toc",
-            "Entire Book changed page counts or heading positions; iterative TOC/layout stabilization is not supported yet. Reserve fixed TOC frames/pages and update Book numbering first",
+            "Entire Book TOC changed pagination or headings outside the bounded Book stabilization path; the result was not adopted",
         ));
     }
     if compose_story(after, toc.story, &Default::default()).overset_at.is_some() {
-        return Err(bad(
-            "toc",
-            "Entire Book TOC does not fit its frames; reserve more fixed TOC space and update Book numbering before retrying (automatic stabilization is not supported yet)",
-        ));
+        return Err(bad("toc", "Entire Book TOC produced overset outside the bounded Book stabilization path; the result was not adopted"));
     }
     Ok(())
 }
@@ -480,6 +479,7 @@ fn generate_impl(s: &mut Session, p: &Value, configure_only: bool) -> Result<Val
     if title_style.as_ref().is_some_and(|n| n.chars().count() > MAX_NAME) {
         return Err(bad("toc.generate", format!("style names are at most {MAX_NAME} characters")));
     }
+    let idml_include_book_documents = s.doc()?.doc.toc.as_ref().and_then(|t| t.idml_include_book_documents);
     let page_numbers = p.get("pageNumbers").and_then(Value::as_bool).unwrap_or(true);
     let create_bookmarks = match p.get("createBookmarks") {
         Some(v) => v.as_bool().ok_or_else(|| bad("toc.generate", "createBookmarks must be a boolean"))?,
@@ -528,8 +528,16 @@ fn generate_impl(s: &mut Session, p: &Value, configure_only: bool) -> Result<Val
                 (sid, w)
             }
         };
-        let toc =
-            Toc { scope, story, title: title.clone(), entries: entries.clone(), page_numbers, title_style: title_style.clone(), create_bookmarks };
+        let toc = Toc {
+            scope,
+            idml_include_book_documents,
+            story,
+            title: title.clone(),
+            entries: entries.clone(),
+            page_numbers,
+            title_style: title_style.clone(),
+            create_bookmarks,
+        };
         let n = if configure_only { 0 } else { fill(d, &toc, width, found)? };
         d.toc = Some(toc);
         Ok(json!({"story": story.0, "entries": n}))

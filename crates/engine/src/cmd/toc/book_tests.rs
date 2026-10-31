@@ -160,14 +160,31 @@ fn entire_book_layout_guard_rolls_back_overset_and_page_growth() {
     let original = (*f.session.doc().unwrap().doc).clone();
     let mut changed = original.clone();
     changed.insert_pages(None, 1, None).unwrap();
-    assert!(validate_book_layout(&original, &changed).unwrap_err().to_string().contains("stabilization"));
+    assert!(validate_book_layout(&original, &changed).unwrap_err().to_string().contains("outside the bounded Book stabilization path"));
+    let mut overset = original.clone();
+    let sid = overset.toc.as_ref().unwrap().story;
+    let story = overset.story_mut(sid).unwrap();
+    story.replace(0..story.len(), &"Contents ".repeat(5000));
+    assert!(validate_book_layout(&original, &overset).unwrap_err().to_string().contains("overset outside the bounded Book stabilization path"));
 }
 
 #[test]
-fn entire_book_scope_survives_idml_export_import() {
+fn explicit_book_scope_exports_preference_without_activating_import() {
     let mut f = Fixture::new().unwrap();
+    f.session.execute("toc.generate", &json!({"styles":["Local Head"],"page":2})).unwrap();
+    f.session
+        .edit(|d, _| {
+            d.toc.as_mut().unwrap().idml_include_book_documents = Some(false);
+            Ok(())
+        })
+        .unwrap();
     let params = f.params();
-    f.session.execute("toc.generate", &params).unwrap();
+    let result = f.session.execute("toc.generate", &params).unwrap();
+    assert!((2..=4).contains(&result["passes"].as_u64().unwrap()));
+    assert_eq!(result["pendingSave"], true);
+    let toc = f.session.doc().unwrap().doc.toc.as_ref().unwrap();
+    assert_eq!(toc.scope, TocScope::EntireBook);
+    assert_eq!(toc.idml_include_book_documents, Some(false));
     for scope in [TocScope::CurrentDocument, TocScope::EntireBook] {
         let mut d = (*f.session.doc().unwrap().doc).clone();
         d.toc.as_mut().unwrap().scope = scope;
@@ -177,7 +194,8 @@ fn entire_book_scope_survives_idml_export_import() {
         std::io::Read::read_to_string(&mut zip.by_name("Resources/Styles.xml").unwrap(), &mut styles).unwrap();
         assert!(styles.contains(if scope == TocScope::EntireBook { "IncludeBookDocuments=\"true\"" } else { "IncludeBookDocuments=\"false\"" }));
         let back = designcraft_idml::import_idml(&bytes).unwrap();
-        assert_eq!(back.toc.as_ref().unwrap().scope, scope);
+        assert_eq!(back.toc.as_ref().unwrap().scope, TocScope::CurrentDocument);
+        assert_eq!(back.toc.as_ref().unwrap().idml_include_book_documents, Some(scope == TocScope::EntireBook));
     }
 }
 
@@ -317,4 +335,50 @@ fn entire_book_rejects_document_local_bookmark_destinations() {
     let before = serde_json::to_value(&d).unwrap();
     assert!(fill(&mut d, &toc, None, Some(vec![])).is_err());
     assert_eq!(serde_json::to_value(&d).unwrap(), before);
+}
+
+/// An imported preference survives actual commands, native Save/reopen, and IDML re-export
+/// without authorizing Book execution or raising the native capability requirement.
+#[test]
+fn imported_idml_book_preference_survives_local_commands_and_native_save() {
+    use std::io::Read;
+    let (mut source, page) = doc_with(&[("Heading", "Head")]);
+    source.execute("toc.generate", &json!({"styles":["Head"],"page":page})).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    for preference in [false, true] {
+        let mut document = (*source.doc().unwrap().doc).clone();
+        document.toc.as_mut().unwrap().scope = if preference { TocScope::EntireBook } else { TocScope::CurrentDocument };
+        let idml = designcraft_idml::export_idml(&document);
+        let input = dir.path().join(format!("input-{preference}.idml"));
+        std::fs::write(&input, idml).unwrap();
+        let mut session = Session::new();
+        session.execute("file.openIdml", &json!({"path":input})).unwrap();
+        assert!(session.book.is_none());
+        let toc = session.doc().unwrap().doc.toc.as_ref().unwrap();
+        assert_eq!(toc.scope, TocScope::CurrentDocument);
+        assert_eq!(toc.idml_include_book_documents, Some(preference));
+        session.execute("toc.update", &json!({})).unwrap();
+        session.execute("toc.generate", &json!({"styles":["Head"],"scope":"currentDocument"})).unwrap();
+        let path = dir.path().join(format!("saved-{preference}.designcraft"));
+        session.execute("file.saveAs", &json!({"path":path})).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut meta = String::new();
+        zip.by_name("meta.json").unwrap().read_to_string(&mut meta).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&meta).unwrap()["version"], 2);
+        session.execute("file.close", &json!({})).unwrap();
+        session.execute("file.open", &json!({"path":path})).unwrap();
+        session.execute("toc.update", &json!({})).unwrap();
+        let toc = session.doc().unwrap().doc.toc.as_ref().unwrap();
+        assert_eq!(toc.scope, TocScope::CurrentDocument);
+        assert_eq!(toc.idml_include_book_documents, Some(preference));
+        let exported = designcraft_idml::export_idml(&session.doc().unwrap().doc);
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&exported)).unwrap();
+        let mut styles = String::new();
+        zip.by_name("Resources/Styles.xml").unwrap().read_to_string(&mut styles).unwrap();
+        assert!(styles.contains(if preference { "IncludeBookDocuments=\"true\"" } else { "IncludeBookDocuments=\"false\"" }));
+        let imported = designcraft_idml::import_idml(&exported).unwrap();
+        assert_eq!(imported.toc.as_ref().unwrap().scope, TocScope::CurrentDocument);
+        assert_eq!(imported.toc.as_ref().unwrap().idml_include_book_documents, Some(preference));
+    }
 }

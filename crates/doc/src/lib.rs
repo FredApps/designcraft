@@ -834,6 +834,11 @@ pub enum TocScope {
 pub struct Toc {
     #[serde(default)]
     pub scope: TocScope,
+    /// Imported IDML `IncludeBookDocuments` preference, independent of execution scope.
+    /// Entire Book execution exports true; otherwise this value is retained (absent defaults
+    /// to false). This interchange preference alone does not require a newer native reader.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idml_include_book_documents: Option<bool>,
     pub story: StoryId,
     pub title: String,
     pub entries: Vec<TocEntry>,
