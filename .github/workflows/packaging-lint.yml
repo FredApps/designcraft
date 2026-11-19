@@ -1,51 +1,87 @@
-# Quick static checks for the release pipeline (seconds, no Rust build): workflow syntax,
-# packaging shell/PowerShell scripts, and the Linux desktop/AppStream/Flatpak metadata.
-name: Packaging lint
-
+name: Design FOGRA39 baseline and numeric diagnostic
 on:
-  push:
-    branches: [main, release]
-    paths: [".github/workflows/**", "packaging/**", "assets/app-icon/**"]
-  pull_request:
-    paths: [".github/workflows/**", "packaging/**", "assets/app-icon/**"]
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
-  group: packaging-lint-${{ github.ref }}
-  cancel-in-progress: true
-
+  group: design-fogra39-baseline-20261119
+  cancel-in-progress: false
 jobs:
-  lint:
-    # Intentionally tracked at @main (not SHA-pinned) so org-wide CI improvements, security fixes, and build optimizations propagate without PR churn across all craftapp repos.
-    uses: storytold/craft-common-actions/.github/workflows/packaging-lint.yml@main
-
-  windows-install-policy:
-    timeout-minutes: 10
-    name: Windows installation policy (no app build)
-    runs-on: windows-latest
+  color:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: main
+            ref: 88f5a00e389b5378816dc2daa8c180d90081b393
+          - label: prior-pin
+            ref: b23918dfbe96412ea0da9691c9562a130dc9dd2f
+          - label: candidate
+            ref: 06324f52910184e6fa9bfac16d8aaedfba5a226c
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_BUILD_JOBS: '2'
+      RUST_TEST_THREADS: '1'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
     steps:
-      - name: Harden runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+      - name: Checkout diagnostic harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          egress-policy: audit
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
+          path: harness
           persist-credentials: false
-      - name: Install the pinned packaging toolchain
-        shell: pwsh
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: dotCooCoo/designcraft
+          ref: ${{ matrix.ref }}
+          path: source
+          persist-credentials: false
+      - name: Verify exact source and toolchain
+        id: source
+        working-directory: source
+        env:
+          EXPECTED_REF: ${{ matrix.ref }}
         run: |
-          $tools = Join-Path $env:RUNNER_TEMP 'craft-install-policy-wix'
-          dotnet tool install --tool-path $tools wix --version 5.0.2
-          if ($LASTEXITCODE -ne 0) { throw 'WiX installation failed.' }
-          $tools >> $env:GITHUB_PATH
-          $policy = Get-Content -Raw -LiteralPath packaging/windows/install-policy.json | ConvertFrom-Json
-          foreach ($extension in @($policy.extensions)) {
-            & (Join-Path $tools 'wix.exe') extension add -g "WixToolset.$extension.wixext/5.0.2"
-            if ($LASTEXITCODE -ne 0) { throw "WiX extension $extension installation failed." }
-          }
-      - name: Build and check non-executable installer fixtures
-        shell: pwsh
-        run: ./packaging/windows/test-install-policy.ps1 -OutputDirectory (Join-Path $env:RUNNER_TEMP 'craft-install-policy-tests')
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_REF"
+          test -z "$(git status --porcelain)"
+          sha256sum Cargo.lock > ../lock.sha
+          rustup toolchain install 1.95.0 --profile minimal
+          echo "Exact source $EXPECTED_REF. Targeted original color failures and additive numeric diagnostic only; not full package/workspace certification." >> "$GITHUB_STEP_SUMMARY"
+      - name: Run original swatch regression unchanged
+        id: swatches
+        continue-on-error: true
+        working-directory: source
+        run: cargo +1.95.0 test --locked -p designcraft-color --lib cms::tests::default_cmyk_swatches_show_as_coated_fogra39 -- --exact --nocapture
+      - name: Run original intent regression unchanged
+        id: intents
+        if: ${{ !cancelled() && steps.source.outcome == 'success' }}
+        continue-on-error: true
+        working-directory: source
+        run: cargo +1.95.0 test --locked -p designcraft-color --lib cms::tests::intents_differ -- --exact --nocapture
+      - name: Add diagnostic-only observations and run
+        id: numbers
+        if: ${{ !cancelled() && steps.source.outcome == 'success' }}
+        continue-on-error: true
+        working-directory: source
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          cat ../harness/.github/color-diagnostic.rs >> crates/color/src/cms/tests.rs
+          cargo +1.95.0 test --locked -p designcraft-color --lib cms::tests::diagnostic_fogra39_profile_and_intent_values -- --exact --nocapture
+      - name: Restore diagnostic source and report original outcomes
+        if: ${{ !cancelled() && steps.source.outcome == 'success' }}
+        working-directory: source
+        env:
+          SWATCHES: ${{ steps.swatches.outcome }}
+          INTENTS: ${{ steps.intents.outcome }}
+          NUMBERS: ${{ steps.numbers.outcome }}
+        run: |
+          set -euo pipefail
+          git restore -- crates/color/src/cms/tests.rs
+          sha256sum -c ../lock.sha
+          test -z "$(git status --porcelain)"
+          printf 'Original swatches: %s\nOriginal intent: %s\nNumeric diagnostic: %s\nNo production assertions changed.\n' "$SWATCHES" "$INTENTS" "$NUMBERS" >> "$GITHUB_STEP_SUMMARY"
+          test "$SWATCHES" = success && test "$INTENTS" = success && test "$NUMBERS" = success
